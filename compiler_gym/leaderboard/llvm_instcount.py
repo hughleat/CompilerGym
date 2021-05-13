@@ -71,6 +71,14 @@ flags.DEFINE_integer(
     "n", 10, "The number of repetitions of the search to run for each benchmark."
 )
 flags.DEFINE_string("test_dataset", "cbench-v1", "The dataset to use for the search.")
+flags.DEFINE_string(
+    "benchmark_names",
+    "",
+    "The switch is only active if max_benchmarks == 0. "
+    "Name of selected benchmarks to evaluate, separated by comma. "
+    "If empty then we select all of them."
+)
+
 flags.DEFINE_boolean("validate", True, "Run validation on the results.")
 flags.DEFINE_boolean(
     "resume",
@@ -241,9 +249,20 @@ def eval_llvm_instcount_policy(policy: Policy) -> None:
         try:
             # Build the list of benchmarks to evaluate.
             benchmarks = env.datasets[FLAGS.test_dataset].benchmark_uris()
-            if FLAGS.max_benchmarks:
+
+            if FLAGS.max_benchmarks > 0:
                 benchmarks = islice(benchmarks, FLAGS.max_benchmarks)
-            benchmarks = list(benchmarks)
+                benchmarks = list(benchmarks)
+            elif FLAGS.benchmark_names != "":
+                selected_names = set(FLAGS.benchmark_names.split(","))
+                sel_benchmarks = []
+                for b in benchmarks:
+                    name = b[b.rindex("/") + 1:]
+                    if name in selected_names:
+                        sel_benchmarks.append(b)
+                benchmarks = sel_benchmarks
+            else:
+                benchmarks = list(benchmarks)
 
             # Repeat the searches for the requested number of iterations.
             benchmarks *= FLAGS.n
