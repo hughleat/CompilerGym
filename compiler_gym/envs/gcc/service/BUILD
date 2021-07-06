@@ -4,17 +4,12 @@
 # LICENSE file in the root directory of this source tree.
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 
-py_binary(
-    name = "compiler_gym-gcc-service",
+filegroup(
+    name = "service",
     srcs = [
+        "compiler_gym-gcc-service",
         "gcc_service.py",
         "gcc_spec.py",
     ],
-    main = "gcc_service.py",
     visibility = ["//visibility:public"],
-    deps = [
-        "//compiler_gym/service",
-        "//compiler_gym/service/proto",
-        "//compiler_gym/service/runtime",
-    ],
 )

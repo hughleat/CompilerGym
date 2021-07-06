@@ -8,20 +8,11 @@ py_library(
     name = "gcc",
     srcs = ["__init__.py"],
     data = [
-        "//compiler_gym/envs/gcc/service:compiler_gym-gcc-service",
+        "//compiler_gym/envs/gcc/service",
     ],
     visibility = ["//visibility:public"],
     deps = [
+        "//compiler_gym/service/runtime",  # Implicit dependency of service.
         "//compiler_gym/util",
-    ],
-)
-
-py_test(
-    name = "gcc_tests",
-    srcs = ["gcc_tests.py"],
-    deps = [
-        ":gcc",
-        "//compiler_gym",
-        "//tests:test_main",
     ],
 )

@@ -29,7 +29,6 @@ from compiler_gym.service.proto import (
     ScalarRange,
     ScalarRangeList,
 )
-from compiler_gym.service.runtime import create_and_run_compiler_gym_service
 
 
 class GCCCompilationSession(CompilationSession):
@@ -44,9 +43,9 @@ class GCCCompilationSession(CompilationSession):
         self, working_directory: Path, action_space: ActionSpace, benchmark: Benchmark
     ):
         super().__init__(working_directory, action_space, benchmark)
+        # The benchmark being used
+        self.benchmark = benchmark
         if self.spec:
-            # The benchmark being used
-            self.benchmark = benchmark
             # The current choices for each options. '-1' indicates the implicit
             # missing option.
             self.choices = [-1] * len(self.spec.options)
@@ -181,7 +180,7 @@ class GCCCompilationSession(CompilationSession):
         if not self._obj:
             self.prepare_files()
             logging.info(f"Compiling: {' '.join(map(str, self.obj_command_line()))}")
-            result = subprocess.run(self.obj_command_line(), cwd=self.working_dir)
+            subprocess.run(self.obj_command_line(), cwd=self.working_dir)
             with open(self.obj_path, "rb") as f:
                 # Set the internal variables
                 self._obj = f.read()
@@ -193,7 +192,7 @@ class GCCCompilationSession(CompilationSession):
         if not self._obj:
             self.prepare_files()
             logging.info(f"Assembling: {' '.join(map(str, self.asm_command_line()))}")
-            result = subprocess.run(self.asm_command_line(), cwd=self.working_dir)
+            subprocess.run(self.asm_command_line(), cwd=self.working_dir)
             logging.info("Assembled")
             with open(self.asm_path, "rb") as f:
                 # Set the internal variables
@@ -454,6 +453,3 @@ GCCCompilationSession.observation_spaces = [
 
 if not GCCCompilationSession.spec:
     raise RuntimeError("Unable to create GCC spec")
-
-if __name__ == "__main__":
-    create_and_run_compiler_gym_service(GCCCompilationSession)

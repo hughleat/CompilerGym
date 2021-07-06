@@ -414,6 +414,10 @@ def _gcc_parse_params(gcc_bin: str = gcc_bin):
         if not bits:
             return
 
+        # TODO(hugh): Not sure what the correct behavior is there.
+        if len(bits) <= 1:
+            return
+
         spec = bits[0]
         default = bits[1]
 
