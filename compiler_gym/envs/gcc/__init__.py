@@ -7,43 +7,80 @@ from pathlib import Path
 from typing import Iterable
 
 from compiler_gym.datasets import Benchmark, Dataset
+from compiler_gym.envs.compiler_env import CompilerEnv
 from compiler_gym.spaces import Reward
 from compiler_gym.util.registration import register
-from compiler_gym.util.runfiles_path import site_data_path
+from compiler_gym.util.runfiles_path import runfiles_path, site_data_path
 
-GCC_SERVICE_BINARY: Path = Path("service/gcc_service.py")
+GCC_SERVICE_BINARY: Path = runfiles_path(
+    "compiler_gym/envs/gcc/service/compiler_gym-gcc-service"
+)
 
 
-class RuntimeReward(Reward):
-    """An example reward that uses changes in the "runtime" observation value
-    to compute incremental reward.
-    """
-
+class AsmSizeReward(Reward):
     def __init__(self):
         super().__init__(
-            id="runtime",
-            observation_spaces=["runtime"],
+            id="asm-size",
+            observation_spaces=["asm-size"],
             default_value=0,
             default_negates_returns=True,
             deterministic=False,
             platform_dependent=True,
         )
-        self.previous_runtime = None
+        self.previous = None
 
     def reset(self, benchmark: str):
         del benchmark  # unused
-        self.previous_runtime = None
+        self.previous = None
 
     def update(self, action, observations, observation_view):
         del action
         del observation_view
 
-        if self.previous_runtime is None:
-            self.previous_runtime = observations[0]
+        if self.previous is None:
+            self.previous = observations[0]
 
-        reward = float(self.previous_runtime - observations[0])
-        self.previous_runtime = observations[0]
+        reward = float(self.previous - observations[0])
+        self.previous = observations[0]
         return reward
+
+
+class ObjSizeReward(Reward):
+    def __init__(self):
+        super().__init__(
+            id="obj-size",
+            observation_spaces=["obj-size"],
+            default_value=0,
+            default_negates_returns=True,
+            deterministic=False,
+            platform_dependent=True,
+        )
+        self.previous = None
+
+    def reset(self, benchmark: str):
+        del benchmark  # unused
+        self.previous = None
+
+    def update(self, action, observations, observation_view):
+        del action
+        del observation_view
+
+        if self.previous is None:
+            self.previous = observations[0]
+
+        reward = float(self.previous - observations[0])
+        self.previous = observations[0]
+        return reward
+
+
+foo_c = """
+#include "stdio.h"
+
+int main(int argc, char* argv[]) {
+    printf("Hello, World\\n");
+    return 0;
+}
+"""
 
 
 class ExampleDataset(Dataset):
@@ -56,7 +93,7 @@ class ExampleDataset(Dataset):
         )
         self._benchmarks = {
             "benchmark://example-v0/foo": Benchmark.from_file_contents(
-                "benchmark://example-v0/foo", "Ir data".encode("utf-8")
+                "benchmark://example-v0/foo", foo_c.encode("utf-8")
             ),
             "benchmark://example-v0/bar": Benchmark.from_file_contents(
                 "benchmark://example-v0/bar", "Ir data".encode("utf-8")
@@ -73,12 +110,18 @@ class ExampleDataset(Dataset):
             raise LookupError("Unknown program name")
 
 
+class GccEnv(CompilerEnv):
+    pass
+
+
+print("HELLO WORLD")
+
 register(
     id="gcc-v0",
-    entry_point="compiler_gym.envs:CompilerEnv",
+    entry_point="compiler_gym.envs.gcc:GccEnv",
     kwargs={
         "service": GCC_SERVICE_BINARY,
-        "rewards": [RuntimeReward()],
+        "rewards": [AsmSizeReward(), ObjSizeReward()],
         "datasets": [ExampleDataset()],
     },
 )
