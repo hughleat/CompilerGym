@@ -3,21 +3,22 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 """Tests for the example CompilerGym service."""
+import pickle
+
 import gcc  # noqa: Register environments
 import gym
 import numpy as np
 import pytest
-from gym.spaces import Box
 
 import compiler_gym
 from compiler_gym.envs import CompilerEnv
 from compiler_gym.service import SessionNotFound
-from compiler_gym.spaces import NamedDiscrete, Scalar, Sequence
+from compiler_gym.spaces import Scalar, Sequence
 
 
 @pytest.fixture(scope="function")
 def env() -> CompilerEnv:
-    """Text fixture that yields an environment."""
+    """Test fixture that yields an environment."""
     return gym.make("gcc-v0")
 
 
@@ -29,33 +30,38 @@ def test_versions(env: CompilerEnv):
 
 def test_action_space(env: CompilerEnv):
     """Test that the environment reports the service's action spaces."""
-    assert env.action_spaces == [
-        NamedDiscrete(
-            name="default",
-            items=["a", "b", "c"],
-        )
-    ]
+    assert env.action_spaces[0].name == "default"
+    assert len(env.action_spaces[0].names) == 2281
+    assert env.action_spaces[0].names[0] == "-O0"
 
 
 def test_observation_spaces(env: CompilerEnv):
     """Test that the environment reports the service's observation spaces."""
     env.reset()
-    assert env.observation.spaces.keys() == {"ir", "features", "runtime"}
-    assert env.observation.spaces["ir"].space == Sequence(
+    assert env.observation.spaces.keys() == {
+        "source",
+        "asm",
+        "asm-size",
+        "asm-hash",
+        "obj",
+        "obj-size",
+        "obj-hash",
+        "gcc-spec",
+        "choices",
+        "command-line",
+    }
+    assert env.observation.spaces["obj-size"].space == Scalar(
+        min=0, max=np.iinfo(np.int64).max, dtype=np.int64
+    )
+    assert env.observation.spaces["asm"].space == Sequence(
         size_range=(0, None), dtype=str, opaque_data_format=""
-    )
-    assert env.observation.spaces["features"].space == Box(
-        shape=(3,), low=-100, high=100, dtype=np.int64
-    )
-    assert env.observation.spaces["runtime"].space == Scalar(
-        min=0, max=np.inf, dtype=np.float64
     )
 
 
 def test_reward_spaces(env: CompilerEnv):
     """Test that the environment reports the service's reward spaces."""
     env.reset()
-    assert env.reward.spaces.keys() == {"runtime"}
+    assert env.reward.spaces.keys() == {"asm-size", "obj-size"}
 
 
 def test_step_before_reset(env: CompilerEnv):
@@ -67,13 +73,13 @@ def test_step_before_reset(env: CompilerEnv):
 def test_observation_before_reset(env: CompilerEnv):
     """Taking an observation before reset() is illegal."""
     with pytest.raises(SessionNotFound, match=r"Must call reset\(\) before step\(\)"):
-        _ = env.observation["ir"]
+        _ = env.observation["asm"]
 
 
 def test_reward_before_reset(env: CompilerEnv):
     """Taking a reward before reset() is illegal."""
     with pytest.raises(SessionNotFound, match=r"Must call reset\(\) before step\(\)"):
-        _ = env.reward["runtime"]
+        _ = env.reward["obj-size"]
 
 
 def test_reset_invalid_benchmark(env: CompilerEnv):
@@ -109,35 +115,13 @@ def test_Step_out_of_range(env: CompilerEnv):
     """Test error handling with an invalid action."""
     env.reset()
     with pytest.raises(ValueError) as ctx:
-        env.step(100)
+        env.step(10000)
     assert str(ctx.value) == "Out-of-range"
-
-
-def test_default_ir_observation(env: CompilerEnv):
-    """Test default observation space."""
-    env.observation_space = "ir"
-    observation = env.reset()
-    assert observation == "Hello, world!"
-
-    observation, reward, done, info = env.step(0)
-    assert observation == "Hello, world!"
-    assert reward is None
-    assert not done
-
-
-def test_default_features_observation(env: CompilerEnv):
-    """Test default observation space."""
-    env.observation_space = "features"
-    observation = env.reset()
-    assert isinstance(observation, np.ndarray)
-    assert observation.shape == (3,)
-    assert observation.dtype == np.int64
-    assert observation.tolist() == [0, 0, 0]
 
 
 def test_default_reward(env: CompilerEnv):
     """Test default reward space."""
-    env.reward_space = "runtime"
+    env.reward_space = "obj-size"
     env.reset()
     observation, reward, done, info = env.step(0)
     assert observation is None
@@ -145,17 +129,78 @@ def test_default_reward(env: CompilerEnv):
     assert not done
 
 
-def test_observations(env: CompilerEnv):
+def test_source_observation(env: CompilerEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["ir"] == "Hello, world!"
-    np.testing.assert_array_equal(env.observation["features"], [0, 0, 0])
+    assert env.observation["source"][:20] == '\n#include "stdio.h"\n'
+
+
+def test_asm_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    assert env.observation["asm"][:20] == "\t.text\n\t.cstring\nlC0"
+
+
+def test_asm_size_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    assert env.observation["asm-size"] == 1107
+
+
+def test_asm_hash_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    assert env.observation["asm-hash"] == "ef61c8cdc6509d382815e3143b6278fd"
+
+
+def test_obj_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    assert env.observation["obj"][:5] == b"\xcf\xfa\xed\xfe\x07"
+
+
+def test_obj_size_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    assert env.observation["obj-size"] == 732
+
+
+def test_obj_hash_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    assert env.observation["obj-hash"] == "e6efd98269eeb25705993a8554b2f7f5"
+
+
+def test_choices_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    choices = env.observation["choices"]
+    assert len(choices) == 502
+    assert all(map(lambda x: x == -1, choices))
+
+
+def test_command_line_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    command_line = env.observation["command-line"]
+    assert command_line == "gcc-11 -c src.c -o obj.o"
+
+
+def test_gcc_spec_observation(env: CompilerEnv):
+    """Test observation spaces."""
+    env.reset()
+    spec = pickle.loads(env.observation["gcc-spec"])
+    assert spec.bin == "gcc-11"
 
 
 def test_rewards(env: CompilerEnv):
     """Test reward spaces."""
     env.reset()
-    assert env.reward["runtime"] == 0
+    assert env.reward["asm-size"] == 0
+    assert env.reward["obj-size"] == 0
+    env.step(env.action_space.names.index("-O3"))
+    assert env.reward["asm-size"] == 141
+    assert env.reward["obj-size"] == -48
 
 
 def test_benchmarks(env: CompilerEnv):
@@ -163,6 +208,18 @@ def test_benchmarks(env: CompilerEnv):
         "benchmark://example-v0/foo",
         "benchmark://example-v0/bar",
     ]
+
+
+def test_compile(env: CompilerEnv):
+    env.observation_space = "obj-size"
+    observation = env.reset()
+    assert observation == 732
+    observation, _, _, _ = env.step(env.action_space.names.index("-O0"))
+    assert observation == 732
+    observation, _, _, _ = env.step(env.action_space.names.index("-O3"))
+    assert observation == 780
+    observation, _, _, _ = env.step(env.action_space.names.index("-finline"))
+    assert observation == 780
 
 
 def test_fork(env: CompilerEnv):
