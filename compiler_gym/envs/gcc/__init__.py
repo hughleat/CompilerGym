@@ -8,8 +8,7 @@ from typing import Iterable, Optional, Union
 
 from compiler_gym.datasets import Benchmark, Dataset
 from compiler_gym.envs.compiler_env import CompilerEnv
-
-# from compiler_gym.envs.gcc.datasets import get_gcc_datasets
+from compiler_gym.envs.gcc.datasets import get_gcc_datasets
 from compiler_gym.spaces import Reward
 from compiler_gym.util.registration import register
 from compiler_gym.util.runfiles_path import runfiles_path, site_data_path
@@ -75,43 +74,6 @@ class ObjSizeReward(Reward):
         return reward
 
 
-foo_c = """
-#include "stdio.h"
-
-int main(int argc, char* argv[]) {
-    printf("Hello, World\\n");
-    return 0;
-}
-"""
-
-
-class ExampleDataset(Dataset):
-    def __init__(self, *args, **kwargs):
-        super().__init__(
-            name="benchmark://example-v0",
-            license="MIT",
-            description="An example dataset",
-            site_data_base=site_data_path("example_dataset"),
-        )
-        self._benchmarks = {
-            "benchmark://example-v0/foo": Benchmark.from_file_contents(
-                "benchmark://example-v0/foo", foo_c.encode("utf-8")
-            ),
-            "benchmark://example-v0/bar": Benchmark.from_file_contents(
-                "benchmark://example-v0/bar", "Ir data".encode("utf-8")
-            ),
-        }
-
-    def benchmark_uris(self) -> Iterable[str]:
-        yield from self._benchmarks.keys()
-
-    def benchmark(self, uri: str) -> Benchmark:
-        if uri in self._benchmarks:
-            return self._benchmarks[uri]
-        else:
-            raise LookupError("Unknown program name")
-
-
 class GccEnv(CompilerEnv):
     def __init__(
         self,
@@ -124,10 +86,8 @@ class GccEnv(CompilerEnv):
             *args,
             **kwargs,
             # Set a default benchmark for use.
-            benchmark=benchmark or "cbench-v1/qsort",
-            datasets=[
-                ExampleDataset()
-            ],  # get_gcc_datasets(site_data_base=datasets_site_path),
+            benchmark=benchmark or "chstone-v0/adpcm",
+            datasets=list(get_gcc_datasets(site_data_base=datasets_site_path)),
             rewards=[AsmSizeReward(), ObjSizeReward()],
         )
 
@@ -137,7 +97,5 @@ register(
     entry_point="compiler_gym.envs.gcc:GccEnv",
     kwargs={
         "service": GCC_SERVICE_BINARY,
-        # "rewards": [AsmSizeReward(), ObjSizeReward()],
-        # "datasets": [ExampleDataset()],
     },
 )

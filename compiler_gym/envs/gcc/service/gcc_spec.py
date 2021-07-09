@@ -12,7 +12,7 @@ The particular binary is given by the GCC_BIN environment variable. If not set,
 then 'gcc' will be used.
 
 The main entry point to this file is the 'get_spec' function which returns a
-GCCSpec object. That object describes the version, options and parameters.
+GccSpec object. That object describes the version, options and parameters.
 
 Querying these settings is time consuming, so this file tries to cache the
 values in a cache directory (~/.cache/compiler_gym/gcc).

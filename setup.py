@@ -55,6 +55,7 @@ setuptools.setup(
         "compiler_gym.envs.llvm.service",
         "compiler_gym.envs.llvm",
         "compiler_gym.envs.gcc",
+        "compiler_gym.envs.gcc.datasets",
         "compiler_gym.envs.gcc.service",
         "compiler_gym.envs",
         "compiler_gym.envs",

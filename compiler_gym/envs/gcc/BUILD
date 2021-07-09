@@ -8,7 +8,6 @@ py_library(
     name = "gcc",
     srcs = ["__init__.py"],
     data = [
-        "//compiler_gym/envs/gcc/datasets",
         "//compiler_gym/envs/gcc/service",
     ],
     visibility = ["//visibility:public"],

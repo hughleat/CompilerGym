@@ -16,6 +16,7 @@ import pickle
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
+from urllib.request import urlopen
 
 from compiler_gym.envs.gcc.service import gcc_spec
 from compiler_gym.service import CompilationSession
@@ -36,7 +37,7 @@ class GccCompilationSession(CompilationSession):
 
     compiler_version: str = "1.0.0"
 
-    """The GCCSpec for this compiler"""
+    """The GccSpec for this compiler"""
     spec = gcc_spec.get_spec()
 
     def __init__(
@@ -169,11 +170,13 @@ class GccCompilationSession(CompilationSession):
         """Copy the source to the working directory."""
         if not self._source:
             if self.benchmark.program.contents:
-                with open(self.src_path, "w") as f:
-                    print(self.benchmark.program.contents.decode(), file=f)
                 self._source = self.benchmark.program.contents.decode()
             else:
-                raise NotImplementedError("Program with URI")
+                with urlopen(self.benchmark.program.uri) as r:
+                    self._source = r.read().decode()
+
+            with open(self.src_path, "w") as f:
+                print(self._source, file=f)
 
     def compile(self) -> Optional[str]:
         """Compile the benchmark"""
@@ -263,6 +266,9 @@ class GccCompilationSession(CompilationSession):
             return Observation(scalar_double=0)
         else:
             raise KeyError(observation_space.name)
+
+    def handle_session_parameter(self, key: str, value: str) -> Optional[str]:
+        pass
 
 
 class Action:

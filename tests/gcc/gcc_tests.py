@@ -130,25 +130,25 @@ def test_default_reward(env: GccEnv):
 def test_source_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["source"][:20] == '\n#include "stdio.h"\n'
+    assert env.observation["source"][:20] == "/*\n+----------------"
 
 
 def test_asm_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["asm"][:20] == "\t.text\n\t.cstring\nlC0"
+    assert env.observation["asm"][:20] == "\t.text\n\t.globl _tqmf"
 
 
 def test_asm_size_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["asm-size"] == 1107
+    assert env.observation["asm-size"] == 44089
 
 
 def test_asm_hash_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["asm-hash"] == "ef61c8cdc6509d382815e3143b6278fd"
+    assert env.observation["asm-hash"] == "79a55346c10d6ea019050bfa0d1ab402"
 
 
 def test_obj_observation(env: GccEnv):
@@ -160,13 +160,13 @@ def test_obj_observation(env: GccEnv):
 def test_obj_size_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["obj-size"] == 732
+    assert env.observation["obj-size"] == 14748
 
 
 def test_obj_hash_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["obj-hash"] == "e6efd98269eeb25705993a8554b2f7f5"
+    assert env.observation["obj-hash"] == "582614df51c4d7307e117a8331c55e67"
 
 
 def test_choices_observation(env: GccEnv):
@@ -197,27 +197,24 @@ def test_rewards(env: GccEnv):
     assert env.reward["asm-size"] == 0
     assert env.reward["obj-size"] == 0
     env.step(env.action_space.names.index("-O3"))
-    assert env.reward["asm-size"] == 141
-    assert env.reward["obj-size"] == -48
+    assert env.reward["asm-size"] == -17817.0
+    assert env.reward["obj-size"] == -5212.0
 
 
 def test_benchmarks(env: GccEnv):
-    assert list(env.datasets.benchmark_uris()) == [
-        "benchmark://example-v0/foo",
-        "benchmark://example-v0/bar",
-    ]
+    assert list(env.datasets.benchmark_uris())[0] == "benchmark://chstone-v0/adpcm"
 
 
 def test_compile(env: GccEnv):
     env.observation_space = "obj-size"
     observation = env.reset()
-    assert observation == 732
+    assert observation == 14748
     observation, _, _, _ = env.step(env.action_space.names.index("-O0"))
-    assert observation == 732
+    assert observation == 14748
     observation, _, _, _ = env.step(env.action_space.names.index("-O3"))
-    assert observation == 780
+    assert observation == 19960
     observation, _, _, _ = env.step(env.action_space.names.index("-finline"))
-    assert observation == 780
+    assert observation == 19960
 
 
 def test_fork(env: GccEnv):
