@@ -20,6 +20,7 @@ values in a cache directory (~/.cache/compiler_gym/gcc).
 Running this file will print the gcc spec to stdout.
 """
 import logging
+import math
 import os
 import pathlib
 import pickle
@@ -58,7 +59,7 @@ class Option:
         raise NotImplementedError()
 
 
-class GCCOOption(Option):
+class GccOOption(Option):
     """This class represents the -O0, -O1, -O2, -O3, -Os, and -Ofast options.
     This class starts with no values, we fill them in with
     '__gcc_parse_optimize'.
@@ -79,10 +80,10 @@ class GCCOOption(Option):
         return "-O"
 
     def __repr__(self) -> str:
-        return f"<GCCOOption values=[{','.join(self.values)}]>"
+        return f"<GccOOption values=[{','.join(self.values)}]>"
 
 
-class GCCFlagOption(Option):
+class GccFlagOption(Option):
     """An ordinary -f flag. These have two possible settings. For a given flag
     name there are '-f<name>' and '-fno-<name>."""
 
@@ -99,10 +100,10 @@ class GCCFlagOption(Option):
         return f"-f{self.name}"
 
     def __repr__(self) -> str:
-        return f"<GCCFlagOption name={self.name}>"
+        return f"<GccFlagOption name={self.name}>"
 
 
-class GCCFlagEnumOption(Option):
+class GccFlagEnumOption(Option):
     """A flag of style '-f<name>=[val1, val2, ...]'.
     'self.name' holds the name. 'self.values' holds the values."""
 
@@ -120,10 +121,10 @@ class GCCFlagEnumOption(Option):
         return f"-f{self.name}"
 
     def __repr__(self) -> str:
-        return f"<GCCFlagEnumOption name={self.name}, values=[{','.join(self.values)}]>"
+        return f"<GccFlagEnumOption name={self.name}, values=[{','.join(self.values)}]>"
 
 
-class GCCFlagIntOption(Option):
+class GccFlagIntOption(Option):
     """A flag of style '-f<name>=<integer>' where the integer is between min and
     max."""
 
@@ -142,10 +143,10 @@ class GCCFlagIntOption(Option):
         return f"-f{self.name}"
 
     def __repr__(self) -> str:
-        return f"<GCCFlagIntOption name={self.name}, min={self.min}, max={self.max}>"
+        return f"<GccFlagIntOption name={self.name}, min={self.min}, max={self.max}>"
 
 
-class GCCFlagAlignOption(Option):
+class GccFlagAlignOption(Option):
     """Alignment flags. These take several forms. See the GCC documentation."""
 
     def __init__(self, name: str):
@@ -162,10 +163,10 @@ class GCCFlagAlignOption(Option):
         return f"-f{self.name}"
 
     def __repr__(self) -> str:
-        return f"<GCCFlagAlignOption name={self.name}>"
+        return f"<GccFlagAlignOption name={self.name}>"
 
 
-class GCCParamEnumOption(Option):
+class GccParamEnumOption(Option):
     """A parameter '--param=<name>=[val1, val2, val3]."""
 
     def __init__(self, name: str, values: List[str]):
@@ -183,11 +184,11 @@ class GCCParamEnumOption(Option):
 
     def __repr__(self) -> str:
         return (
-            f"<GCCParamEnumOption name={self.name}, values=[{','.join(self.values)}]>"
+            f"<GccParamEnumOption name={self.name}, values=[{','.join(self.values)}]>"
         )
 
 
-class GCCParamIntOption(Option):
+class GccParamIntOption(Option):
     """A parameter '--param=<name>=<integer>. where the integer is between min
     and max."""
 
@@ -206,10 +207,10 @@ class GCCParamIntOption(Option):
         return f"--param={self.name}"
 
     def __repr__(self) -> str:
-        return f"<GCCParamIntOption name={self.name}, min={self.min}, max={self.max}>"
+        return f"<GccParamIntOption name={self.name}, min={self.min}, max={self.max}>"
 
 
-class GCCSpec:
+class GccSpec:
     """This class combines all the information about the version and options,"""
 
     def __init__(self, bin: str, version: str, options: List[Option]):
@@ -257,9 +258,9 @@ def _gcc_parse_optimize(gcc_bin: str = gcc_bin):
         # -O flag
         name = "O"
         # There are multiple -O flags. We add one value at a time.
-        opt = options[name] = options.get(name, GCCOOption())
+        opt = options[name] = options.get(name, GccOOption())
         # There shouldn't be any way to overwrite this with the wrong type.
-        assert type(opt) == GCCOOption
+        assert type(opt) == GccOOption
         opt.values.append(value)
 
     # Add a flag
@@ -268,7 +269,7 @@ def _gcc_parse_optimize(gcc_bin: str = gcc_bin):
         # If there is something else in its place already (like a flag enum),
         # then we don't overwrite it.  Straight flags always have the lowest
         # priority
-        options[name] = options.get(name, GCCFlagOption(name))
+        options[name] = options.get(name, GccFlagOption(name))
 
     # Add an enum flag
     def add_gcc_flag_enum(name: str, values: List[str]):
@@ -276,9 +277,9 @@ def _gcc_parse_optimize(gcc_bin: str = gcc_bin):
         opt = options.get(name)
         if opt:
             # We should only ever be overwriting a straight flag
-            assert type(opt) == GCCFlagOption
+            assert type(opt) == GccFlagOption
         # Always overwrite
-        options[name] = GCCFlagEnumOption(name, values)
+        options[name] = GccFlagEnumOption(name, values)
 
     # Add an integer flag
     def add_gcc_flag_int(name: str, min: int, max: int):
@@ -286,9 +287,9 @@ def _gcc_parse_optimize(gcc_bin: str = gcc_bin):
         opt = options.get(name)
         if opt:
             # We should only ever be overwriting a straight flag
-            assert type(opt) == GCCFlagOption
+            assert type(opt) == GccFlagOption
         # Always overwrite
-        options[name] = GCCFlagIntOption(name, min, max)
+        options[name] = GccFlagIntOption(name, min, max)
 
     # Add an align flag
     def add_gcc_flag_align(name: str):
@@ -296,9 +297,9 @@ def _gcc_parse_optimize(gcc_bin: str = gcc_bin):
         opt = options.get(name)
         if opt:
             # We should only ever be overwriting a straight flag
-            assert type(opt) == GCCFlagOption
+            assert type(opt) == GccFlagOption
         # Always overwrite
-        options[name] = GCCFlagAlignOption(name)
+        options[name] = GccFlagAlignOption(name)
 
     # Parse a line from the help output
     def parse_line(line: str):
@@ -394,13 +395,13 @@ def _gcc_parse_params(gcc_bin: str = gcc_bin):
         # Enum param.
         opt = params.get(name)
         assert not opt
-        params[name] = GCCParamEnumOption(name, values)
+        params[name] = GccParamEnumOption(name, values)
 
     def add_gcc_param_int(name: str, min: int, max: int):
         # Int flag.
         opt = params.get(name)
         assert not opt
-        params[name] = GCCParamIntOption(name, min, max)
+        params[name] = GccParamIntOption(name, min, max)
 
     def is_int(s: str) -> bool:
         try:
@@ -485,7 +486,7 @@ def _version_hash(version: str) -> str:
     return h % (2 << 64)
 
 
-def get_spec(gcc_bin: str = gcc_bin) -> Optional[GCCSpec]:
+def get_spec(gcc_bin: str = gcc_bin) -> Optional[GccSpec]:
     # Get the version
     version = _gcc_get_version(gcc_bin)
     if not version:
@@ -504,18 +505,19 @@ def get_spec(gcc_bin: str = gcc_bin) -> Optional[GCCSpec]:
         with open(spec_path, "rb") as f:
             spec = pickle.load(f)
         spec.gcc_bin = gcc_bin
-        logging.info(f"GCCSpec for version '{version}' read from {spec_path}")
+        logging.info(f"GccSpec for version '{version}' read from {spec_path}")
     else:
         # Pickle doesn't exist, parse
         optim_opts = _gcc_parse_optimize(gcc_bin)
         param_opts = _gcc_parse_params(gcc_bin)
-        spec = GCCSpec(gcc_bin, version, optim_opts + param_opts)
+        spec = GccSpec(gcc_bin, version, optim_opts + param_opts)
+        if not spec.options:
+            return None
         with open(spec_path, "wb") as f:
             pickle.dump(spec, f)
-        logging.info(f"GCCSpec for version '{version}' written to {spec_path}")
-    import math
+        logging.info(f"GccSpec for version '{version}' written to {spec_path}")
 
-    logging.info(f"GCCSpec size is approximately 10^{math.log(spec.size)}")
+    logging.info(f"GccSpec size is approximately 10^{math.log(spec.size)}")
     return spec
 
 

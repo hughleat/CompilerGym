@@ -284,6 +284,8 @@ The 'tutorial' command will give a step by step guide."""
         super().__init__()
 
         self.env = env
+        # Have to make sure we have reset before any step
+        # self.env.reset()
 
         # Get the benchmarks
         self.benchmarks = []

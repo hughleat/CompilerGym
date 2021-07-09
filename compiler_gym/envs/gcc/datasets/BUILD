@@ -13,7 +13,6 @@ py_library(
     visibility = ["//visibility:public"],
     deps = [
         "//compiler_gym/datasets",
-        "//compiler_gym/envs/llvm:llvm_benchmark",
         "//compiler_gym/service/proto",
         "//compiler_gym/util",
     ],

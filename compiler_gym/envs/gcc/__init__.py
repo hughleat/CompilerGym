@@ -4,10 +4,12 @@
 # LICENSE file in the root directory of this source tree.
 """This module demonstrates how to """
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional, Union
 
 from compiler_gym.datasets import Benchmark, Dataset
 from compiler_gym.envs.compiler_env import CompilerEnv
+
+# from compiler_gym.envs.gcc.datasets import get_gcc_datasets
 from compiler_gym.spaces import Reward
 from compiler_gym.util.registration import register
 from compiler_gym.util.runfiles_path import runfiles_path, site_data_path
@@ -111,17 +113,31 @@ class ExampleDataset(Dataset):
 
 
 class GccEnv(CompilerEnv):
-    pass
+    def __init__(
+        self,
+        *args,
+        benchmark: Optional[Union[str, Benchmark]] = None,
+        datasets_site_path: Optional[Path] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            *args,
+            **kwargs,
+            # Set a default benchmark for use.
+            benchmark=benchmark or "cbench-v1/qsort",
+            datasets=[
+                ExampleDataset()
+            ],  # get_gcc_datasets(site_data_base=datasets_site_path),
+            rewards=[AsmSizeReward(), ObjSizeReward()],
+        )
 
-
-print("HELLO WORLD")
 
 register(
     id="gcc-v0",
     entry_point="compiler_gym.envs.gcc:GccEnv",
     kwargs={
         "service": GCC_SERVICE_BINARY,
-        "rewards": [AsmSizeReward(), ObjSizeReward()],
-        "datasets": [ExampleDataset()],
+        # "rewards": [AsmSizeReward(), ObjSizeReward()],
+        # "datasets": [ExampleDataset()],
     },
 )

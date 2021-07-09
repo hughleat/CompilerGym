@@ -8,10 +8,12 @@ py_library(
     name = "gcc",
     srcs = ["__init__.py"],
     data = [
+        "//compiler_gym/envs/gcc/datasets",
         "//compiler_gym/envs/gcc/service",
     ],
     visibility = ["//visibility:public"],
     deps = [
+        "//compiler_gym/envs/gcc/datasets",
         "//compiler_gym/service/runtime",  # Implicit dependency of service.
         "//compiler_gym/util",
     ],
