@@ -398,6 +398,9 @@ def _gcc_parse_params(gcc_bin: str = gcc_bin) -> List[Option]:
     param_enum_pat = re.compile("--param=([-a-zA-Z0-9]+)=\\[([-A-Za-z_\\|]+)\\]")
     param_interval_pat = re.compile("--param=([-a-zA-Z0-9]+)=<(-?[0-9]+),([0-9]+)>")
     param_number_pat = re.compile("--param=([-a-zA-Z0-9]+)=")
+    param_old_interval_pat = re.compile(
+        "([-a-zA-Z0-9]+)\\s+default\\s+(-?\\d+)\\s+minimum\\s+(-?\\d\\+)\\s+maximum\\s+(-?\\d+)"
+    )
 
     params = {}
 
@@ -461,6 +464,18 @@ def _gcc_parse_params(gcc_bin: str = gcc_bin) -> List[Option]:
             if is_int(default):
                 dflt = int(default)
                 min = min if dflt >= min else dflt
+                add_gcc_param_int(name, min, max)
+                return
+
+        # name  default num minimum num maximum num
+        m = param_old_interval_pat.fullmatch(line)
+        if m:
+            name = m.group(1)
+            default = int(m.group(2))
+            min = int(m.group(3))
+            max = int(m.group(4))
+            if min <= default <= max:
+                # For now we will only consider fully described params
                 add_gcc_param_int(name, min, max)
                 return
 
