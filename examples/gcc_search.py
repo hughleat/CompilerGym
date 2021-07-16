@@ -2,9 +2,8 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
-from gcc_spec import GccSpec
-
 import compiler_gym
+from compiler_gym.envs.gcc.service.gcc_spec import GccSpec
 
 
 class SearchPoint:
