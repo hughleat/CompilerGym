@@ -3,8 +3,6 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 """Tests for the example CompilerGym service."""
-import pickle
-
 import gym
 import numpy as np
 import pytest
@@ -44,7 +42,6 @@ def test_observation_spaces(env: GccEnv):
         "obj",
         "obj-size",
         "obj-hash",
-        "gcc-spec",
         "choices",
         "command-line",
     }
@@ -83,8 +80,8 @@ def test_reward_before_reset(env: GccEnv):
 def test_reset_invalid_benchmark(env: GccEnv):
     """Test requesting a specific benchmark."""
     with pytest.raises(LookupError) as ctx:
-        env.reset(benchmark="example-v0/foobar")
-    assert str(ctx.value) == "Unknown program name"
+        env.reset(benchmark="chstone-v1/flubbedydubfishface")
+    assert str(ctx.value) == "'benchmark://chstone-v1'"
 
 
 def test_invalid_observation_space(env: GccEnv):
@@ -130,49 +127,49 @@ def test_default_reward(env: GccEnv):
 def test_source_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["source"][:20] == "/*\n+----------------"
+    assert env.source[:20] == "/*\n+----------------"
 
 
 def test_asm_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["asm"][:20] == "\t.text\n\t.globl _tqmf"
+    assert env.asm[:20] == "\t.text\n\t.globl _tqmf"
 
 
 def test_asm_size_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["asm-size"] == 44089
+    assert env.asm_size == 44089
 
 
 def test_asm_hash_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["asm-hash"] == "79a55346c10d6ea019050bfa0d1ab402"
+    assert env.asm_hash == "79a55346c10d6ea019050bfa0d1ab402"
 
 
 def test_obj_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["obj"][:5] == b"\xcf\xfa\xed\xfe\x07"
+    assert env.obj[:5] == b"\xcf\xfa\xed\xfe\x07"
 
 
 def test_obj_size_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["obj-size"] == 14748
+    assert env.obj_size == 14748
 
 
 def test_obj_hash_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    assert env.observation["obj-hash"] == "582614df51c4d7307e117a8331c55e67"
+    assert env.obj_hash == "582614df51c4d7307e117a8331c55e67"
 
 
 def test_choices_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    choices = env.observation["choices"]
+    choices = env.choices
     assert len(choices) == 502
     assert all(map(lambda x: x == -1, choices))
 
@@ -180,15 +177,26 @@ def test_choices_observation(env: GccEnv):
 def test_command_line_observation(env: GccEnv):
     """Test observation spaces."""
     env.reset()
-    command_line = env.observation["command-line"]
+    command_line = env.command_line
     assert command_line == "gcc-11 -c src.c -o obj.o"
 
 
-def test_gcc_spec_observation(env: GccEnv):
-    """Test observation spaces."""
+def test_gcc_spec(env: GccEnv):
+    """Test gcc-spec param."""
     env.reset()
-    spec = pickle.loads(env.observation["gcc-spec"])
+    spec = env.gcc_spec
     assert spec.bin == "gcc-11"
+
+
+def test_set_choices(env: GccEnv):
+    """Test that we can set the command line parameters"""
+    env.reset()
+    env.choices = [-1] * len(env.gcc_spec.options)
+    assert env.command_line.startswith("gcc-11 src.c -c obj.o")
+    env.choices = [1] * len(env.gcc_spec.options)
+    assert env.command_line.startswith(
+        "gcc-11 -O1 -fno-aggressive-loop-optimizations -falign-functions -falign-jumps -falign-labels"
+    )
 
 
 def test_rewards(env: GccEnv):
@@ -199,6 +207,15 @@ def test_rewards(env: GccEnv):
     env.step(env.action_space.names.index("-O3"))
     assert env.reward["asm-size"] == -17817.0
     assert env.reward["obj-size"] == -5212.0
+
+
+def test_timeout(env: GccEnv):
+    """Test that the timeout can be set. Can't really make it timeout, I think."""
+    env.reset()
+    env.timeout = 20
+    assert env.timeout == 20
+    env.reset()
+    assert env.timeout == 20
 
 
 def test_benchmarks(env: GccEnv):

@@ -3,15 +3,18 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 """This module demonstrates how to """
+import codecs
+import pickle
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import List, Optional, Union
 
-from compiler_gym.datasets import Benchmark, Dataset
+from compiler_gym.datasets import Benchmark
 from compiler_gym.envs.compiler_env import CompilerEnv
 from compiler_gym.envs.gcc.datasets import get_gcc_datasets
 from compiler_gym.spaces import Reward
+from compiler_gym.util.gym_type_hints import ObservationType
 from compiler_gym.util.registration import register
-from compiler_gym.util.runfiles_path import runfiles_path, site_data_path
+from compiler_gym.util.runfiles_path import runfiles_path
 
 GCC_SERVICE_BINARY: Path = runfiles_path(
     "compiler_gym/envs/gcc/service/compiler_gym-gcc-service"
@@ -90,6 +93,78 @@ class GccEnv(CompilerEnv):
             datasets=list(get_gcc_datasets(site_data_base=datasets_site_path)),
             rewards=[AsmSizeReward(), ObjSizeReward()],
         )
+        self._spec = None
+        self._timeout = None
+
+    def reset(
+        self,
+        benchmark: Optional[Union[str, Benchmark]] = None,
+        action_space: Optional[str] = None,
+        retry_count: int = 0,
+    ) -> Optional[ObservationType]:
+        observation = super().reset(benchmark, action_space, retry_count)
+        if self._timeout:
+            self.send_param("timeout", str(self._timeout))
+        return observation
+
+    @property
+    def timeout(self) -> Optional[int]:
+        return self._timeout
+
+    @timeout.setter
+    def timeout(self, value: Optional[int]):
+        self._timeout = value
+        self.send_param("timeout", str(value) if value else "")
+
+    @property
+    def gcc_spec(self):
+        if not self._spec:
+            pickled = self.send_param("gcc-spec", "")
+            self._spec = pickle.loads(codecs.decode(pickled.encode(), "base64"))
+        return self._spec
+
+    @property
+    def source(self) -> str:
+        return self.observation["source"]
+
+    @property
+    def asm(self) -> str:
+        return self.observation["asm"]
+
+    @property
+    def asm_size(self) -> int:
+        return self.observation["asm-size"]
+
+    @property
+    def asm_hash(self) -> str:
+        return self.observation["asm-hash"]
+
+    @property
+    def obj(self) -> bytes:
+        return self.observation["obj"]
+
+    @property
+    def obj_size(self) -> int:
+        return self.observation["obj-size"]
+
+    @property
+    def obj_hash(self) -> str:
+        return self.observation["obj-hash"]
+
+    @property
+    def command_line(self) -> str:
+        return self.observation["command-line"]
+
+    @property
+    def choices(self) -> List[int]:
+        return self.observation["choices"]
+
+    @choices.setter
+    def choices(self, choices: List[int]):
+        spec = self.gcc_spec
+        assert len(spec.options) == len(choices)
+        assert all(-1 <= c < len(spec.options[i]) for i, c in enumerate(choices))
+        self.send_param("choices", ",".join(map(str, choices)))
 
 
 register(

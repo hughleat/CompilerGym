@@ -9,6 +9,7 @@ This service reads a specification of the compiler from the binary using the
 code in 'gcc_spec.py'. To change the compiler from the default 'gcc', set the
 'GCC_BIN' environment variable.
 """
+import codecs
 import hashlib
 import logging
 import os
@@ -46,6 +47,8 @@ class GccCompilationSession(CompilationSession):
         super().__init__(working_directory, action_space, benchmark)
         # The benchmark being used
         self.benchmark = benchmark
+        # Timeout value for compilation (in seconds)
+        self._timeout = None
         if self.spec:
             # The current choices for each options. '-1' indicates the implicit
             # missing option.
@@ -110,11 +113,6 @@ class GccCompilationSession(CompilationSession):
         """Get the compiled code hash"""
         self.compile()
         return self._obj_hash
-
-    @property
-    def gcc_spec(self) -> bytes:
-        """Get the pickled spec"""
-        return pickle.dumps(self.spec)
 
     @property
     def src_path(self) -> Path:
@@ -183,26 +181,42 @@ class GccCompilationSession(CompilationSession):
         if not self._obj:
             self.prepare_files()
             logging.info(f"Compiling: {' '.join(map(str, self.obj_command_line()))}")
-            subprocess.run(self.obj_command_line(), cwd=self.working_dir)
-            with open(self.obj_path, "rb") as f:
-                # Set the internal variables
-                self._obj = f.read()
-                self._obj_size = os.path.getsize(self.obj_path)
-                self._obj_hash = hashlib.md5(self._obj).hexdigest()
+            r = subprocess.run(
+                self.obj_command_line(), cwd=self.working_dir, timeout=self._timeout
+            )
+            if r.returncode == 0:
+                logging.info("Compiled")
+                with open(self.obj_path, "rb") as f:
+                    # Set the internal variables
+                    self._obj = f.read()
+                    self._obj_size = os.path.getsize(self.obj_path)
+                    self._obj_hash = hashlib.md5(self._obj).hexdigest()
 
     def assemble(self) -> Optional[str]:
         """Assemble the benchmark"""
         if not self._obj:
             self.prepare_files()
             logging.info(f"Assembling: {' '.join(map(str, self.asm_command_line()))}")
-            subprocess.run(self.asm_command_line(), cwd=self.working_dir)
-            logging.info("Assembled")
-            with open(self.asm_path, "rb") as f:
-                # Set the internal variables
-                asm_bytes = f.read()
-                self._asm = asm_bytes.decode()
-                self._asm_size = os.path.getsize(self.asm_path)
-                self._asm_hash = hashlib.md5(asm_bytes).hexdigest()
+            r = subprocess.run(
+                self.asm_command_line(), cwd=self.working_dir, timeout=self._timeout
+            )
+            if r.returncode == 0:
+                logging.info("Assembled")
+                with open(self.asm_path, "rb") as f:
+                    # Set the internal variables
+                    asm_bytes = f.read()
+                    self._asm = asm_bytes.decode()
+                    self._asm_size = os.path.getsize(self.asm_path)
+                    self._asm_hash = hashlib.md5(asm_bytes).hexdigest()
+
+    def reset_cached(self):
+        """Reset the cached values"""
+        self._obj = None
+        self._obj_size = None
+        self._obj_hash = None
+        self._asm = None
+        self._asm_size = None
+        self._asm_hash = None
 
     def apply_action(
         self, proto_action: ProtoAction
@@ -223,31 +237,28 @@ class GccCompilationSession(CompilationSession):
         # Reset the internal variables if this action has caused a change in the
         # choices
         if old_choices != self.choices:
-            self._obj = None
-            self._obj_size = None
-            self._obj_hash = None
-            self._asm = None
-            self._asm_size = None
-            self._asm_hash = None
+            self.reset_cached()
 
+        # The action has not changed anything yet. That waits until an
+        # observation is taken
         return False, None, False
 
     def get_observation(self, observation_space: ObservationSpace) -> Observation:
         """Get one of the observations"""
         if observation_space.name == "source":
-            return Observation(string_value=self.source)
+            return Observation(string_value=self.source or "")
         elif observation_space.name == "asm":
-            return Observation(string_value=self.asm)
+            return Observation(string_value=self.asm or "")
         elif observation_space.name == "asm-size":
-            return Observation(scalar_int64=self.asm_size)
+            return Observation(scalar_int64=self.asm_size or -1)
         elif observation_space.name == "asm-hash":
-            return Observation(string_value=self.asm_hash)
+            return Observation(string_value=self.asm_hash or "")
         elif observation_space.name == "obj":
-            return Observation(binary_value=self.obj)
+            return Observation(binary_value=self.obj or b"")
         elif observation_space.name == "obj-size":
-            return Observation(scalar_int64=self.obj_size)
+            return Observation(scalar_int64=self.obj_size or -1)
         elif observation_space.name == "obj-hash":
-            return Observation(string_value=self.obj_hash)
+            return Observation(string_value=self.obj_hash or "")
         elif observation_space.name == "choices":
             observation = Observation()
             observation.int64_list.value[:] = self.choices
@@ -256,19 +267,27 @@ class GccCompilationSession(CompilationSession):
             return Observation(
                 string_value=" ".join(map(str, self.obj_command_line("src.c", "obj.o")))
             )
-        elif observation_space.name == "gcc-spec":
-            return Observation(binary_value=self.gcc_spec)
-        elif observation_space.name == "features":
-            observation = Observation()
-            observation.int64_list.value[:] = [0, 0, 0]
-            return observation
-        elif observation_space.name == "runtime":
-            return Observation(scalar_double=0)
         else:
             raise KeyError(observation_space.name)
 
     def handle_session_parameter(self, key: str, value: str) -> Optional[str]:
-        pass
+        if key == "gcc-spec":
+            return codecs.encode(pickle.dumps(self.spec), "base64").decode()
+        elif key == "choices":
+            choices = list(map(int, value.split(",")))
+            assert len(choices) == len(self.spec.options)
+            assert all(
+                -1 <= p <= len(self.spec.options[i]) for i, p in enumerate(choices)
+            )
+            if choices != self.choices:
+                self.choices = choices
+                self.reset_cached()
+            return ""
+        elif key == "timeout":
+            self._timeout = None if value == "" else int(value)
+            return ""
+        else:
+            return None
 
 
 class Action:
@@ -381,7 +400,7 @@ if GccCompilationSession.spec:
             deterministic=True,
             platform_dependent=True,
             default_value=Observation(
-                scalar_double=0,
+                scalar_int64=-1,
             ),
         ),
         # The hash of the assembled code
@@ -405,11 +424,11 @@ if GccCompilationSession.spec:
         # The size of the object code
         ObservationSpace(
             name="obj-size",
-            scalar_int64_range=ScalarRange(min=ScalarLimit(value=0)),
+            scalar_int64_range=ScalarRange(min=ScalarLimit(value=-1)),
             deterministic=True,
             platform_dependent=True,
             default_value=Observation(
-                scalar_double=0,
+                scalar_int64=-1,
             ),
         ),
         # The hash of the object code
@@ -448,18 +467,9 @@ if GccCompilationSession.spec:
             platform_dependent=True,
             default_value=Observation(string_value=""),
         ),
-        # The pickled spec of the compiler
-        ObservationSpace(
-            name="gcc-spec",
-            binary_size_range=ScalarRange(min=ScalarLimit(value=0)),
-            deterministic=True,
-            platform_dependent=True,
-            default_value=Observation(binary_value=b""),
-        ),
     ]
 
 else:
     raise RuntimeError(
-        "Unable to create GCC spec.\n"
-        + f" Is the GCC_BIN ({os.getenv('GCC_BIN')}) environment set correctly?"
+        f"Unable to create GCC spec.\n Is the GCC_BIN ({os.getenv('GCC_BIN')}) environment set correctly?"
     )

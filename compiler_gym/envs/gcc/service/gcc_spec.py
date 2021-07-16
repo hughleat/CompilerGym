@@ -29,6 +29,10 @@ import subprocess
 import sys
 from typing import List, Optional
 
+# To ensure that, when restoring, we do not accept old specs, the specs are
+# versioned.  The current version number is below.
+spec_version = "2021-07-16_11-65-33"
+
 # The binary to use. Taken from an environment variable. Defaults to 'gcc'.
 gcc_bin = os.getenv("GCC_BIN") or "gcc"
 
@@ -85,13 +89,16 @@ class GccOOption(Option):
 
 class GccFlagOption(Option):
     """An ordinary -f flag. These have two possible settings. For a given flag
-    name there are '-f<name>' and '-fno-<name>."""
+    name there are '-f<name>' and '-fno-<name>.
+    If no_fno is true, then there is only the -f<name> form
+    """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, no_fno: bool = False):
         self.name = name
+        self.no_fno = no_fno
 
     def __len__(self):
-        return 2
+        return 1 if self.no_fno else 2
 
     def __getitem__(self, key: int) -> str:
         return f"-f{'' if key == 0 else 'no-'}{self.name}"
@@ -213,10 +220,13 @@ class GccParamIntOption(Option):
 class GccSpec:
     """This class combines all the information about the version and options,"""
 
-    def __init__(self, bin: str, version: str, options: List[Option]):
+    def __init__(
+        self, bin: str, version: str, options: List[Option], spec_version: str
+    ):
         self.bin = bin
         self.version = version
         self.options = options
+        self.spec_version = spec_version
 
     @property
     def size(self) -> int:
@@ -228,7 +238,7 @@ class GccSpec:
         return sz
 
 
-def _gcc_parse_optimize(gcc_bin: str = gcc_bin):
+def _gcc_parse_optimize(gcc_bin: str = gcc_bin) -> List[Option]:
     """Parse the optimisation help string from the GCC binary to find
     options."""
 
@@ -373,7 +383,7 @@ def _gcc_parse_optimize(gcc_bin: str = gcc_bin):
     return list(map(lambda x: x[1], sorted(list(options.items()))))
 
 
-def _gcc_parse_params(gcc_bin: str = gcc_bin):
+def _gcc_parse_params(gcc_bin: str = gcc_bin) -> List[Option]:
     """Parse the param help string from the GCC binary to find
     options."""
 
@@ -463,6 +473,54 @@ def _gcc_parse_params(gcc_bin: str = gcc_bin):
     return list(map(lambda x: x[1], sorted(list(params.items()))))
 
 
+def _fix_options(options: List[Option]) -> List[Option]:
+    """Fixes for things that seem not to be true in the help"""
+    # Ignore -flive-patching
+    def keep(option: Option) -> bool:
+        if type(option) == GccFlagEnumOption:
+            if option.name == "live-patching":
+                return False
+        return True
+
+    options = list(filter(keep, options))
+
+    for i, option in enumerate(options):
+        if type(option) == GccParamIntOption:
+            # Some things say they can have -1, but can't
+            if option.name in [
+                "logical-op-non-short-circuit",
+                "prefetch-minimum-stride",
+                "sched-autopref-queue-depth",
+                "vect-max-peeling-for-alignment",
+            ]:
+                option.min = 0
+
+        elif type(option) == GccFlagOption:
+            # -fhandle-exceptions renamed to -fexceptions
+            if option.name == "handle-exceptions":
+                option.name = "exceptions"
+
+            # Some flags have no -fno- version
+            if option.name in [
+                "stack-protector-all",
+                "stack-protector-explicit",
+                "stack-protector-strong",
+            ]:
+                option.no_fno = True
+
+            # -fno-threadsafe-statics should have the no- removed
+            if option.name == "no-threadsafe-statics":
+                option.name = "threadsafe-statics"
+
+        elif type(option) == GccFlagIntOption:
+            # -fpack-struct has to be a small positive power of two
+            if option.name == "pack-struct":
+                values = [str(1 << j) for j in range(5)]
+                options[i] = GccFlagEnumOption("pack-struct", values)
+
+    return options
+
+
 def _gcc_get_version(gcc_bin: str = gcc_bin) -> Optional[str]:
     """Get the version string"""
 
@@ -470,6 +528,7 @@ def _gcc_get_version(gcc_bin: str = gcc_bin) -> Optional[str]:
     try:
         args = [gcc_bin, "--version"]
         result = subprocess.run(args, capture_output=True)
+        # TODO do something with errors
         version = result.stdout.decode().split("\n")[0]
         logging.info(f"GCC version is {version}")
         return version
@@ -500,22 +559,36 @@ def get_spec(gcc_bin: str = gcc_bin) -> Optional[GccSpec]:
     spec_path = cache_dir / spec_filename
 
     # Try to get the pickled version
+    spec = None
     if os.path.isfile(spec_path):
         # Pickle exists
-        with open(spec_path, "rb") as f:
-            spec = pickle.load(f)
-        spec.gcc_bin = gcc_bin
-        logging.info(f"GccSpec for version '{version}' read from {spec_path}")
-    else:
+        try:
+            with open(spec_path, "rb") as f:
+                spec = pickle.load(f)
+            spec.gcc_bin = gcc_bin
+            logging.info(f"GccSpec for version '{version}' read from {spec_path}")
+            if spec.spec_version != spec_version:
+                logging.info(
+                    f"Spec version '{spec.spec_version}'!='{spec_version}' out of date. Ignoring cached spec"
+                )
+                spec = None
+        except Exception:
+            logging.warning(f"Unable to unpickle spec from '{spec_path}'")
+
+    if spec is None:
         # Pickle doesn't exist, parse
         optim_opts = _gcc_parse_optimize(gcc_bin)
         param_opts = _gcc_parse_params(gcc_bin)
-        spec = GccSpec(gcc_bin, version, optim_opts + param_opts)
+        options = _fix_options(optim_opts + param_opts)
+        spec = GccSpec(gcc_bin, version, options, spec_version)
         if not spec.options:
             return None
-        with open(spec_path, "wb") as f:
-            pickle.dump(spec, f)
-        logging.info(f"GccSpec for version '{version}' written to {spec_path}")
+        try:
+            with open(spec_path, "wb") as f:
+                pickle.dump(spec, f)
+            logging.info(f"GccSpec for version '{version}' written to {spec_path}")
+        except Exception:
+            logging.warning(f"Unable to cache spec from '{spec_path}'")
 
     logging.info(f"GccSpec size is approximately 10^{math.log(spec.size)}")
     return spec
