@@ -3,14 +3,10 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 import subprocess
-from concurrent.futures import as_completed
 from pathlib import Path
 from typing import Iterable
 
 from compiler_gym.datasets import Benchmark, TarDatasetWithManifest
-from compiler_gym.datasets.benchmark import BenchmarkWithSource
-from compiler_gym.envs.gcc.service.gcc_spec import gcc_bin
-from compiler_gym.util import thread_pool
 from compiler_gym.util.filesystem import atomic_file_write
 
 URIS = [
@@ -102,7 +98,11 @@ class CHStoneDataset(TarDatasetWithManifest):
 
             with atomic_file_write(preprocessed_path) as tmp_path:
                 # Work out the command to preprocess the file with LLVM
-                cmd = [gcc_bin]
+
+                # TODO(github.com/facebookresearch/CompilerGym/issues/325): Send
+                # over the unprocessed code to the service, have the service
+                # preprocess..
+                cmd = ["gcc"]
 
                 cmd += ["-I", str(source_dir_path)]
                 cmd += [str(source_path)]

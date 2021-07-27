@@ -94,8 +94,9 @@ class ConnectionOpts(BaseModel):
     """If the service is started from a local script, this set of args is used
     on the command line. No effect when used for existing sockets."""
     script_env: Dict[str, str] = {}
-    """If the service is started from a local script, this set of env vars is 
+    """If the service is started from a local script, this set of env vars is
     used on the command line. No effect when used for existing sockets."""
+
 
 class ServiceError(Exception):
     """Error raised from the service."""
@@ -292,7 +293,7 @@ class ManagedConnection(Connection):
         process_exit_max_seconds: float,
         logger: logging.Logger,
         script_args: List[str],
-        script_env: Dict[str, str]
+        script_env: Dict[str, str],
     ):
         """Constructor.
 
@@ -650,8 +651,8 @@ class CompilerGymServiceConnection:
                         rpc_init_max_seconds=opts.rpc_init_max_seconds,
                         port_init_max_seconds=opts.local_service_port_init_max_seconds,
                         logger=logger,
-                        script_args=opt.script_args,
-                        script_env=opt.script_env,
+                        script_args=opts.script_args,
+                        script_env=opts.script_env,
                     )
                 else:
                     endpoint_name = endpoint

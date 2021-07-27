@@ -27,7 +27,7 @@ def test_versions(env: GccEnv):
 def test_action_space(env: GccEnv):
     """Test that the environment reports the service's action spaces."""
     assert env.action_spaces[0].name == "default"
-    assert len(env.action_spaces[0].names) == 2281
+    assert len(env.action_spaces[0].names) == 2129
     assert env.action_spaces[0].names[0] == "-O0"
 
 

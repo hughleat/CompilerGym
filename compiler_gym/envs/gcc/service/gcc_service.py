@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from urllib.request import urlopen
 
-from compiler_gym.envs.gcc import gcc_spec, GccSpec
+from compiler_gym.envs.gcc import gcc_spec
 from compiler_gym.service import CompilationSession
 from compiler_gym.service.proto import Action as ProtoAction
 from compiler_gym.service.proto import (
@@ -34,431 +34,405 @@ from compiler_gym.service.proto import (
 from compiler_gym.util.runfiles_path import cache_path
 
 
-class GccCompilationSession(CompilationSession):
-    """A GCC interactive compilation session."""
+def make_gcc_compilation_session(gcc: Path):
+    """..."""
 
-    compiler_version: str = "1.0.0"
+    spec = gcc_spec.get_spec(gcc, cache_dir=cache_path("gcc"))
 
-    def __init__(
-        self, working_directory: Path, action_space: ActionSpace, benchmark: Benchmark
-    ):
-        super().__init__(working_directory, action_space, benchmark)
-        # The benchmark being used
-        self.benchmark = benchmark
-        # Timeout value for compilation (in seconds)
-        self._timeout = None
-        # The source code
-        self._source = None
-        # The assembled code
-        self._asm = None
-        # Size of the assembled code
-        self._asm_size = None
-        # Hash of the assembled code
-        self._asm_hash = None
-        # The object binary
-        self._obj = None
-        # size of the object binary
-        self._obj_size = None
-        # Hash of the object binary
-        self._obj_hash = None
-        # Set the path to the GCC executable
-        self._gcc_bin = "gcc"
-        # Initially the choices and the spec, etc are empty. They will be
-        # initialised lazily
-        self._spec = None
-        self._choices = None
-        self._actions = None
-        self._action_spaces = None
-        self._observation_spaces = None
+    # The available actions
+    actions = []
 
-    @property
-    def gcc_bin(self) -> str:
-        """Get the path to the GCC executable"""
-        return self._gcc_bin
+    # Actions that are small will have all their various choices made as
+    # explicit actions.
+    # Actions that are not small will have the abbility to increment the choice
+    # by different amounts.
+    for i, option in enumerate(spec.options):
+        if len(option) < 10:
+            for j in range(len(option)):
+                actions.append(SimpleAction(option, i, j))
+        if len(option) >= 10:
+            actions.append(IncrAction(option, i, 1))
+            actions.append(IncrAction(option, i, -1))
+        if len(option) >= 50:
+            actions.append(IncrAction(option, i, 10))
+            actions.append(IncrAction(option, i, -10))
+        if len(option) >= 500:
+            actions.append(IncrAction(option, i, 100))
+            actions.append(IncrAction(option, i, -100))
+        if len(option) >= 5000:
+            actions.append(IncrAction(option, i, 1000))
+            actions.append(IncrAction(option, i, -1000))
 
-    @gcc_bin.setter
-    def gcc_bin(self, value):
-        """Setter for gcc_bin."""
-        self._gcc_bin = value
-        # Unset the spec and choices
-        self._spec = None
-        self._choice = None
-        self._actions = None
-        self._action_spaces = None
-        self._observation_spaces = None
+    action_spaces_ = [ActionSpace(name="default", action=list(map(str, actions)))]
 
-    @property
-    def spec(self) -> GccSpec:
-        """Get (and possibly create the GCC spec)"""
-        if self._spec is None:
-            cache_dir = cache_path("gcc")
-            self._spec = gcc_spec(self._gcc_bin, cache_dir)
-        return self._spec
+    observation_spaces_ = [
+        # A string of the source code
+        ObservationSpace(
+            name="source",
+            string_size_range=ScalarRange(min=ScalarLimit(value=0)),
+            deterministic=True,
+            platform_dependent=False,
+            default_value=Observation(string_value=""),
+        ),
+        # A string of the assembled code
+        ObservationSpace(
+            name="asm",
+            string_size_range=ScalarRange(min=ScalarLimit(value=0)),
+            deterministic=True,
+            platform_dependent=True,
+            default_value=Observation(string_value=""),
+        ),
+        # The size of the assembled code
+        ObservationSpace(
+            name="asm-size",
+            scalar_int64_range=ScalarRange(min=ScalarLimit(value=0)),
+            deterministic=True,
+            platform_dependent=True,
+            default_value=Observation(
+                scalar_int64=-1,
+            ),
+        ),
+        # The hash of the assembled code
+        ObservationSpace(
+            name="asm-hash",
+            string_size_range=ScalarRange(
+                min=ScalarLimit(value=0), max=ScalarLimit(value=200)
+            ),
+            deterministic=True,
+            platform_dependent=True,
+            default_value=Observation(string_value=""),
+        ),
+        # A bytes of the object code
+        ObservationSpace(
+            name="obj",
+            binary_size_range=ScalarRange(min=ScalarLimit(value=0)),
+            deterministic=True,
+            platform_dependent=False,
+            default_value=Observation(binary_value=b""),
+        ),
+        # The size of the object code
+        ObservationSpace(
+            name="obj-size",
+            scalar_int64_range=ScalarRange(min=ScalarLimit(value=-1)),
+            deterministic=True,
+            platform_dependent=True,
+            default_value=Observation(
+                scalar_int64=-1,
+            ),
+        ),
+        # The hash of the object code
+        ObservationSpace(
+            name="obj-hash",
+            string_size_range=ScalarRange(
+                min=ScalarLimit(value=0), max=ScalarLimit(value=200)
+            ),
+            deterministic=True,
+            platform_dependent=True,
+            default_value=Observation(string_value=""),
+        ),
+        # A list of the choices. Each element corresponds to an option in the spec.
+        # '-1' indicates that this is empty on the command line (e.g. if the choice
+        # corresponding to the '-O' option is -1, then no -O flag will be emitted.)
+        # If a nonnegative number if given then that particular choice is used
+        # (e.g. for the -O flag, 5 means use '-Ofast' on the command line.)
+        ObservationSpace(
+            name="choices",
+            int64_range_list=ScalarRangeList(
+                range=[
+                    ScalarRange(
+                        min=ScalarLimit(value=0), max=ScalarLimit(value=len(option) - 1)
+                    )
+                    for option in spec.options
+                ]
+            ),
+        ),
+        # The command line for compiling the object file as a string
+        ObservationSpace(
+            name="command-line",
+            string_size_range=ScalarRange(
+                min=ScalarLimit(value=0), max=ScalarLimit(value=200)
+            ),
+            deterministic=True,
+            platform_dependent=True,
+            default_value=Observation(string_value=""),
+        ),
+    ]
 
-    @property
-    def choices(self) -> List[int]:
-        if self._choices is None:
-            self._choices = [-1] * len(self.spec.options)
-        return self._choices
+    class GccCompilationSession(CompilationSession):
+        """A GCC interactive compilation session."""
 
-    @choices.setter
-    def choices(self, value: List[int]):
-        self._choices = value
+        compiler_version: str = "1.0.0"
+        action_spaces = action_spaces_
+        observation_spaces = observation_spaces_
 
-    @property
-    def actions(self) -> List['Action']:
-        if self._actions is None:
-            # The available actions
-            self._actions = []
-
-            # Actions that are small will have all their various choices made as
-            # explicit actions.
-            # Actions that are not small will have the abbility to increment the choice
-            # by different amounts.
-            for i, option in enumerate(self.spec.options):
-                if len(option) < 10:
-                    for j in range(len(option)):
-                        self._actions.append(SimpleAction(option, i, j))
-                if len(option) >= 10:
-                    self._actions.append(IncrAction(option, i, 1))
-                    self._actions.append(IncrAction(option, i, -1))
-                if len(option) >= 50:
-                    self._actions.append(IncrAction(option, i, 10))
-                    self._actions.append(IncrAction(option, i, -10))
-                if len(option) >= 500:
-                    self._actions.append(IncrAction(option, i, 100))
-                    self._actions.append(IncrAction(option, i, -100))
-                if len(option) >= 5000:
-                    self._actions.append(IncrAction(option, i, 1000))
-                    self._actions.append(IncrAction(option, i, -1000))
-        return self._actions
-
-    @property
-    def action_spaces(self):
-        if self._action_spaces is None:
-            self._action_spaces = [
-                ActionSpace(
-                    name="default", action=list(map(str, self.actions))
-                )
-            ]
-        return self._action_spaces
-
-    @property
-    def observation_spaces(self):
-        if self._observation_spaces is None:
-            self._observation_spaces = [
-                # A string of the source code
-                ObservationSpace(
-                    name="source",
-                    string_size_range=ScalarRange(min=ScalarLimit(value=0)),
-                    deterministic=True,
-                    platform_dependent=False,
-                    default_value=Observation(string_value=""),
-                ),
-                # A string of the assembled code
-                ObservationSpace(
-                    name="asm",
-                    string_size_range=ScalarRange(min=ScalarLimit(value=0)),
-                    deterministic=True,
-                    platform_dependent=True,
-                    default_value=Observation(string_value=""),
-                ),
-                # The size of the assembled code
-                ObservationSpace(
-                    name="asm-size",
-                    scalar_int64_range=ScalarRange(min=ScalarLimit(value=0)),
-                    deterministic=True,
-                    platform_dependent=True,
-                    default_value=Observation(
-                        scalar_int64=-1,
-                    ),
-                ),
-                # The hash of the assembled code
-                ObservationSpace(
-                    name="asm-hash",
-                    string_size_range=ScalarRange(
-                        min=ScalarLimit(value=0), max=ScalarLimit(value=200)
-                    ),
-                    deterministic=True,
-                    platform_dependent=True,
-                    default_value=Observation(string_value=""),
-                ),
-                # A bytes of the object code
-                ObservationSpace(
-                    name="obj",
-                    binary_size_range=ScalarRange(min=ScalarLimit(value=0)),
-                    deterministic=True,
-                    platform_dependent=False,
-                    default_value=Observation(binary_value=b""),
-                ),
-                # The size of the object code
-                ObservationSpace(
-                    name="obj-size",
-                    scalar_int64_range=ScalarRange(min=ScalarLimit(value=-1)),
-                    deterministic=True,
-                    platform_dependent=True,
-                    default_value=Observation(
-                        scalar_int64=-1,
-                    ),
-                ),
-                # The hash of the object code
-                ObservationSpace(
-                    name="obj-hash",
-                    string_size_range=ScalarRange(
-                        min=ScalarLimit(value=0), max=ScalarLimit(value=200)
-                    ),
-                    deterministic=True,
-                    platform_dependent=True,
-                    default_value=Observation(string_value=""),
-                ),
-                # A list of the choices. Each element corresponds to an option in the spec.
-                # '-1' indicates that this is empty on the command line (e.g. if the choice
-                # corresponding to the '-O' option is -1, then no -O flag will be emitted.)
-                # If a nonnegative number if given then that particular choice is used
-                # (e.g. for the -O flag, 5 means use '-Ofast' on the command line.)
-                ObservationSpace(
-                    name="choices",
-                    int64_range_list=ScalarRangeList(
-                        range=[
-                            ScalarRange(
-                                min=ScalarLimit(value=0), max=ScalarLimit(value=len(option) - 1)
-                            )
-                            for option in GccCompilationSession.spec.options
-                        ]
-                    ),
-                ),
-                # The command line for compiling the object file as a string
-                ObservationSpace(
-                    name="command-line",
-                    string_size_range=ScalarRange(
-                        min=ScalarLimit(value=0), max=ScalarLimit(value=200)
-                    ),
-                    deterministic=True,
-                    platform_dependent=True,
-                    default_value=Observation(string_value=""),
-                ),
-            ]
-        return self._observation_spaces
-
-    @property
-    def source(self) -> str:
-        """Get the benchmark source"""
-        self.prepare_files()
-        return self._source
-
-    @property
-    def asm(self) -> bytes:
-        """Get the assembled code"""
-        self.assemble()
-        return self._asm
-
-    @property
-    def asm_size(self) -> int:
-        """Get the assembled code size"""
-        self.assemble()
-        return self._asm_size
-
-    @property
-    def asm_hash(self) -> str:
-        """Get the assembled code hash"""
-        self.assemble()
-        return self._asm_hash
-
-    @property
-    def obj(self) -> bytes:
-        """Get the compiled code"""
-        self.compile()
-        return self._obj
-
-    @property
-    def obj_size(self) -> int:
-        """Get the compiled code size"""
-        self.compile()
-        return self._obj_size
-
-    @property
-    def obj_hash(self) -> str:
-        """Get the compiled code hash"""
-        self.compile()
-        return self._obj_hash
-
-    @property
-    def src_path(self) -> Path:
-        """Get the path to the source file"""
-        return self.working_dir / "src.c"
-
-    @property
-    def obj_path(self) -> Path:
-        """Get the path to object file"""
-        return self.working_dir / "obj.o"
-
-    @property
-    def asm_path(self) -> Path:
-        """Get the path to the assembly"""
-        return self.working_dir / "asm.s"
-
-    def obj_command_line(
-        self, src_path: Path = None, obj_path: Path = None
-    ) -> List[str]:
-        """Get the command line to create the object file.
-        The 'src_path' and 'obj_path' give the input and output paths. If not
-        set, then they are taken from 'self.src_path' and 'self.obj_path'. This
-        is useful for printing where the actual paths are not important."""
-        src_path = src_path or self.src_path
-        obj_path = obj_path or self.obj_path
-        # Gather the choices as strings
-        opts = [
-            option[choice]
-            for option, choice in zip(self.spec.options, self.choices)
-            if choice >= 0
-        ]
-        cmd_line = [self.spec.bin] + opts + ["-w", "-c", src_path, "-o", obj_path]
-        return cmd_line
-
-    def asm_command_line(
-        self, src_path: Path = None, asm_path: Path = None
-    ) -> List[str]:
-        """Get the command line to create the assembly file.
-        The 'src_path' and 'obj_path' give the input and output paths. If not
-        set, then they are taken from 'self.src_path' and 'self.obj_path'. This
-        is useful for printing where the actual paths are not important."""
-        src_path = src_path or self.src_path
-        asm_path = asm_path or self.asm_path
-        opts = [
-            option[choice]
-            for option, choice in zip(self.spec.options, self.choices)
-            if choice >= 0
-        ]
-        cmd_line = [self.spec.bin] + opts + ["-w", "-S", src_path, "-o", asm_path]
-        return cmd_line
-
-    def prepare_files(self):
-        """Copy the source to the working directory."""
-        if not self._source:
-            if self.benchmark.program.contents:
-                self._source = self.benchmark.program.contents.decode()
-            else:
-                with urlopen(self.benchmark.program.uri) as r:
-                    self._source = r.read().decode()
-
-            with open(self.src_path, "w") as f:
-                print(self._source, file=f)
-
-    def compile(self) -> Optional[str]:
-        """Compile the benchmark"""
-        if not self._obj:
-            self.prepare_files()
-            logging.info(f"Compiling: {' '.join(map(str, self.obj_command_line()))}")
-            r = subprocess.run(
-                self.obj_command_line(), cwd=self.working_dir, timeout=self._timeout
-            )
-            if r.returncode == 0:
-                logging.info("Compiled")
-                with open(self.obj_path, "rb") as f:
-                    # Set the internal variables
-                    self._obj = f.read()
-                    self._obj_size = os.path.getsize(self.obj_path)
-                    self._obj_hash = hashlib.md5(self._obj).hexdigest()
-
-    def assemble(self) -> Optional[str]:
-        """Assemble the benchmark"""
-        if not self._obj:
-            self.prepare_files()
-            logging.info(f"Assembling: {' '.join(map(str, self.asm_command_line()))}")
-            r = subprocess.run(
-                self.asm_command_line(), cwd=self.working_dir, timeout=self._timeout
-            )
-            if r.returncode == 0:
-                logging.info("Assembled")
-                with open(self.asm_path, "rb") as f:
-                    # Set the internal variables
-                    asm_bytes = f.read()
-                    self._asm = asm_bytes.decode()
-                    self._asm_size = os.path.getsize(self.asm_path)
-                    self._asm_hash = hashlib.md5(asm_bytes).hexdigest()
-
-    def reset_cached(self):
-        """Reset the cached values"""
-        self._obj = None
-        self._obj_size = None
-        self._obj_hash = None
-        self._asm = None
-        self._asm_size = None
-        self._asm_hash = None
-
-    def apply_action(
-        self, proto_action: ProtoAction
-    ) -> Tuple[bool, Optional[ActionSpace], bool]:
-        """Apply an action."""
-        if proto_action.action < 0 or proto_action.action > len(
-            self.action_spaces[0].action
+        def __init__(
+            self,
+            working_directory: Path,
+            action_space: ActionSpace,
+            benchmark: Benchmark,
         ):
-            raise ValueError("Out-of-range")
+            super().__init__(working_directory, action_space, benchmark)
+            # The benchmark being used
+            self.benchmark = benchmark
+            # Timeout value for compilation (in seconds)
+            self._timeout = None
+            # The source code
+            self._source = None
+            # The assembled code
+            self._asm = None
+            # Size of the assembled code
+            self._asm_size = None
+            # Hash of the assembled code
+            self._asm_hash = None
+            # The object binary
+            self._obj = None
+            # size of the object binary
+            self._obj_size = None
+            # Hash of the object binary
+            self._obj_hash = None
+            # Set the path to the GCC executable
+            self._gcc_bin = "gcc"
+            # Initially the choices and the spec, etc are empty. They will be
+            # initialised lazily
+            self._choices = None
 
-        # Get the action
-        action = self.actions[proto_action.action]
-        # Apply the action to this session and check if we changed anything
-        old_choices = self.choices.copy()
-        action(self)
-        logging.info("Applied action " + str(action))
+        @property
+        def choices(self) -> List[int]:
+            if self._choices is None:
+                self._choices = [-1] * len(spec.options)
+            return self._choices
 
-        # Reset the internal variables if this action has caused a change in the
-        # choices
-        if old_choices != self.choices:
-            self.reset_cached()
+        @choices.setter
+        def choices(self, value: List[int]):
+            self._choices = value
 
-        # The action has not changed anything yet. That waits until an
-        # observation is taken
-        return False, None, False
+        @property
+        def source(self) -> str:
+            """Get the benchmark source"""
+            self.prepare_files()
+            return self._source
 
-    def get_observation(self, observation_space: ObservationSpace) -> Observation:
-        """Get one of the observations"""
-        if observation_space.name == "source":
-            return Observation(string_value=self.source or "")
-        elif observation_space.name == "asm":
-            return Observation(string_value=self.asm or "")
-        elif observation_space.name == "asm-size":
-            return Observation(scalar_int64=self.asm_size or -1)
-        elif observation_space.name == "asm-hash":
-            return Observation(string_value=self.asm_hash or "")
-        elif observation_space.name == "obj":
-            return Observation(binary_value=self.obj or b"")
-        elif observation_space.name == "obj-size":
-            return Observation(scalar_int64=self.obj_size or -1)
-        elif observation_space.name == "obj-hash":
-            return Observation(string_value=self.obj_hash or "")
-        elif observation_space.name == "choices":
-            observation = Observation()
-            observation.int64_list.value[:] = self.choices
-            return observation
-        elif observation_space.name == "command-line":
-            return Observation(
-                string_value=" ".join(map(str, self.obj_command_line("src.c", "obj.o")))
-            )
-        else:
-            raise KeyError(observation_space.name)
+        @property
+        def asm(self) -> bytes:
+            """Get the assembled code"""
+            self.assemble()
+            return self._asm
 
-    def handle_session_parameter(self, key: str, value: str) -> Optional[str]:
-        if key == "gcc-bin":
-            self.gcc_bin = value
-            return ""
-        elif key == "gcc-spec":
-            return codecs.encode(pickle.dumps(self.spec), "base64").decode()
-        elif key == "choices":
-            choices = list(map(int, value.split(",")))
-            assert len(choices) == len(self.spec.options)
-            assert all(
-                -1 <= p <= len(self.spec.options[i]) for i, p in enumerate(choices)
-            )
-            if choices != self.choices:
-                self.choices = choices
+        @property
+        def asm_size(self) -> int:
+            """Get the assembled code size"""
+            self.assemble()
+            return self._asm_size
+
+        @property
+        def asm_hash(self) -> str:
+            """Get the assembled code hash"""
+            self.assemble()
+            return self._asm_hash
+
+        @property
+        def obj(self) -> bytes:
+            """Get the compiled code"""
+            self.compile()
+            return self._obj
+
+        @property
+        def obj_size(self) -> int:
+            """Get the compiled code size"""
+            self.compile()
+            return self._obj_size
+
+        @property
+        def obj_hash(self) -> str:
+            """Get the compiled code hash"""
+            self.compile()
+            return self._obj_hash
+
+        @property
+        def src_path(self) -> Path:
+            """Get the path to the source file"""
+            return self.working_dir / "src.c"
+
+        @property
+        def obj_path(self) -> Path:
+            """Get the path to object file"""
+            return self.working_dir / "obj.o"
+
+        @property
+        def asm_path(self) -> Path:
+            """Get the path to the assembly"""
+            return self.working_dir / "asm.s"
+
+        def obj_command_line(
+            self, src_path: Path = None, obj_path: Path = None
+        ) -> List[str]:
+            """Get the command line to create the object file.
+            The 'src_path' and 'obj_path' give the input and output paths. If not
+            set, then they are taken from 'self.src_path' and 'self.obj_path'. This
+            is useful for printing where the actual paths are not important."""
+            src_path = src_path or self.src_path
+            obj_path = obj_path or self.obj_path
+            # Gather the choices as strings
+            opts = [
+                option[choice]
+                for option, choice in zip(spec.options, self.choices)
+                if choice >= 0
+            ]
+            cmd_line = [spec.bin] + opts + ["-w", "-c", src_path, "-o", obj_path]
+            return cmd_line
+
+        def asm_command_line(
+            self, src_path: Path = None, asm_path: Path = None
+        ) -> List[str]:
+            """Get the command line to create the assembly file.
+            The 'src_path' and 'obj_path' give the input and output paths. If not
+            set, then they are taken from 'self.src_path' and 'self.obj_path'. This
+            is useful for printing where the actual paths are not important."""
+            src_path = src_path or self.src_path
+            asm_path = asm_path or self.asm_path
+            opts = [
+                option[choice]
+                for option, choice in zip(spec.options, self.choices)
+                if choice >= 0
+            ]
+            cmd_line = [spec.bin] + opts + ["-w", "-S", src_path, "-o", asm_path]
+            return cmd_line
+
+        def prepare_files(self):
+            """Copy the source to the working directory."""
+            if not self._source:
+                if self.benchmark.program.contents:
+                    self._source = self.benchmark.program.contents.decode()
+                else:
+                    with urlopen(self.benchmark.program.uri) as r:
+                        self._source = r.read().decode()
+
+                with open(self.src_path, "w") as f:
+                    print(self._source, file=f)
+
+        def compile(self) -> Optional[str]:
+            """Compile the benchmark"""
+            if not self._obj:
+                self.prepare_files()
+                logging.info(
+                    f"Compiling: {' '.join(map(str, self.obj_command_line()))}"
+                )
+                r = subprocess.run(
+                    self.obj_command_line(), cwd=self.working_dir, timeout=self._timeout
+                )
+                if r.returncode == 0:
+                    logging.info("Compiled")
+                    with open(self.obj_path, "rb") as f:
+                        # Set the internal variables
+                        self._obj = f.read()
+                        self._obj_size = os.path.getsize(self.obj_path)
+                        self._obj_hash = hashlib.md5(self._obj).hexdigest()
+
+        def assemble(self) -> Optional[str]:
+            """Assemble the benchmark"""
+            if not self._obj:
+                self.prepare_files()
+                logging.info(
+                    f"Assembling: {' '.join(map(str, self.asm_command_line()))}"
+                )
+                r = subprocess.run(
+                    self.asm_command_line(), cwd=self.working_dir, timeout=self._timeout
+                )
+                if r.returncode == 0:
+                    logging.info("Assembled")
+                    with open(self.asm_path, "rb") as f:
+                        # Set the internal variables
+                        asm_bytes = f.read()
+                        self._asm = asm_bytes.decode()
+                        self._asm_size = os.path.getsize(self.asm_path)
+                        self._asm_hash = hashlib.md5(asm_bytes).hexdigest()
+
+        def reset_cached(self):
+            """Reset the cached values"""
+            self._obj = None
+            self._obj_size = None
+            self._obj_hash = None
+            self._asm = None
+            self._asm_size = None
+            self._asm_hash = None
+
+        def apply_action(
+            self, proto_action: ProtoAction
+        ) -> Tuple[bool, Optional[ActionSpace], bool]:
+            """Apply an action."""
+            if proto_action.action < 0 or proto_action.action > len(
+                self.action_spaces[0].action
+            ):
+                raise ValueError("Out-of-range")
+
+            # Get the action
+            action = actions[proto_action.action]
+            # Apply the action to this session and check if we changed anything
+            old_choices = self.choices.copy()
+            action(self)
+            logging.info("Applied action " + str(action))
+
+            # Reset the internal variables if this action has caused a change in the
+            # choices
+            if old_choices != self.choices:
                 self.reset_cached()
-            return ""
-        elif key == "timeout":
-            self._timeout = None if value == "" else int(value)
-            return ""
-        else:
-            return None
+
+            # The action has not changed anything yet. That waits until an
+            # observation is taken
+            return False, None, False
+
+        def get_observation(self, observation_space: ObservationSpace) -> Observation:
+            """Get one of the observations"""
+            if observation_space.name == "source":
+                return Observation(string_value=self.source or "")
+            elif observation_space.name == "asm":
+                return Observation(string_value=self.asm or "")
+            elif observation_space.name == "asm-size":
+                return Observation(scalar_int64=self.asm_size or -1)
+            elif observation_space.name == "asm-hash":
+                return Observation(string_value=self.asm_hash or "")
+            elif observation_space.name == "obj":
+                return Observation(binary_value=self.obj or b"")
+            elif observation_space.name == "obj-size":
+                return Observation(scalar_int64=self.obj_size or -1)
+            elif observation_space.name == "obj-hash":
+                return Observation(string_value=self.obj_hash or "")
+            elif observation_space.name == "choices":
+                observation = Observation()
+                observation.int64_list.value[:] = self.choices
+                return observation
+            elif observation_space.name == "command-line":
+                return Observation(
+                    string_value=" ".join(
+                        map(str, self.obj_command_line("src.c", "obj.o"))
+                    )
+                )
+            else:
+                raise KeyError(observation_space.name)
+
+        def handle_session_parameter(self, key: str, value: str) -> Optional[str]:
+            if key == "gcc-bin":
+                self.gcc_bin = value
+                return ""
+            elif key == "gcc-spec":
+                return codecs.encode(pickle.dumps(spec), "base64").decode()
+            elif key == "choices":
+                choices = list(map(int, value.split(",")))
+                assert len(choices) == len(spec.options)
+                assert all(
+                    -1 <= p <= len(spec.options[i]) for i, p in enumerate(choices)
+                )
+                if choices != self.choices:
+                    self.choices = choices
+                    self.reset_cached()
+                return ""
+            elif key == "timeout":
+                self._timeout = None if value == "" else int(value)
+                return ""
+            else:
+                return None
+
+    return GccCompilationSession
 
 
 class Action:
@@ -471,7 +445,7 @@ class Action:
         self.option = option
         self.option_index = option_index
 
-    def __call__(self, session: GccCompilationSession):
+    def __call__(self, session: "GccCompilationSession"):  # noqa
         """Apply the action to the session."""
         raise NotImplementedError()
 
@@ -487,7 +461,7 @@ class SimpleAction(Action):
         super().__init__(option, option_index)
         self.choice_index = choice_index
 
-    def __call__(self, session: GccCompilationSession):
+    def __call__(self, session: "GccCompilationSession"):  # noqa
         session.choices[self.option_index] = self.choice_index
 
     def __str__(self) -> str:
@@ -501,7 +475,7 @@ class IncrAction(Action):
         super().__init__(option, option_index)
         self.choice_incr = choice_incr
 
-    def __call__(self, session: GccCompilationSession):
+    def __call__(self, session: "GccCompilationSession"):  # noqag
         choice = session.choices[self.option_index]
         choice += self.choice_incr
         if choice < -1:

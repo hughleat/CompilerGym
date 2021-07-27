@@ -11,7 +11,7 @@ from typing import List, Optional, Union
 from compiler_gym.datasets import Benchmark
 from compiler_gym.envs.compiler_env import CompilerEnv
 from compiler_gym.envs.gcc.datasets import get_gcc_datasets
-from compiler_gym.service import ConnectionSettings
+from compiler_gym.service import ConnectionOpts
 from compiler_gym.spaces import Reward
 from compiler_gym.util.gym_type_hints import ObservationType
 
@@ -79,9 +79,11 @@ class GccEnv(CompilerEnv):
         benchmark: Optional[Union[str, Benchmark]] = None,
         datasets_site_path: Optional[Path] = None,
         gcc_bin: Optional[str] = None,
+        connection_settings: Optional[ConnectionOpts] = None,
         **kwargs,
     ):
-        script_args = [gcc_bin] if gcc_bin is not None else []
+        connection_settings = connection_settings or ConnectionOpts()
+        connection_settings.script_env = {"CC": gcc_bin or "gcc"}
         super().__init__(
             *args,
             **kwargs,
@@ -89,7 +91,7 @@ class GccEnv(CompilerEnv):
             benchmark=benchmark or "chstone-v0/adpcm",
             datasets=list(get_gcc_datasets(site_data_base=datasets_site_path)),
             rewards=[AsmSizeReward(), ObjSizeReward()],
-            connection_settings=ConnectionSettings(script_args=script_args),
+            connection_settings=connection_settings,
         )
         self._spec = None
         self._timeout = None

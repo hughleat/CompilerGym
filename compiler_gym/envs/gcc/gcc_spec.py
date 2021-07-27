@@ -30,6 +30,7 @@ from typing import List, Optional
 # versioned.  The current version number is below.
 spec_version = "1.0"
 
+
 class Option:
     """An Option is either a command line optimisation setting or a parameter.
     It is essentially a list of the possible values that can be taken.
@@ -227,7 +228,7 @@ class GccSpec:
 
     @property
     def size(self) -> int:
-        """Calculate the size of the option space. This is the product of the 
+        """Calculate the size of the option space. This is the product of the
         cardinalities of all the options.
         Note this size is likely to big to be returned by __len__.
         """
@@ -246,9 +247,9 @@ def _gcc_parse_optimize(gcc_bin: str) -> List[Option]:
 
     # Call 'gcc --help=optimize -Q'
     args = [gcc_bin, "--help=optimize", "-Q"]
-    result = subprocess.run(args, capture_output=True, check_output=True)
+    result = subprocess.check_output(args, universal_newlines=True)
     # Split into lines. Ignore the first line.
-    out = result.stdout.decode().split("\n")[1:]
+    out = result.split("\n")[1:]
 
     # Regex patterns to match the different options
     O_num_pat = re.compile("-O<number>")
@@ -390,8 +391,8 @@ def _gcc_parse_params(gcc_bin: str) -> List[Option]:
     logging.info("Parsing GCC param space")
 
     args = [gcc_bin, "--help=param", "-Q"]
-    result = subprocess.run(args, capture_output=True, check_output=True)
-    out = result.stdout.decode().split("\n")[1:]
+    result = subprocess.check_output(args, universal_newlines=True)
+    out = result.split("\n")[1:]
 
     param_enum_pat = re.compile("--param=([-a-zA-Z0-9]+)=\\[([-A-Za-z_\\|]+)\\]")
     param_interval_pat = re.compile("--param=([-a-zA-Z0-9]+)=<(-?[0-9]+),([0-9]+)>")
@@ -539,9 +540,10 @@ def _gcc_get_version(gcc_bin: str) -> Optional[str]:
 
     logging.info(f"Getting GCC version for {gcc_bin}")
     try:
-        args = [gcc_bin, "--version"]
-        result = subprocess.run(args, capture_output=True, check_output=True)
-        version = result.stdout.decode().split("\n")[0]
+        result = subprocess.check_output(
+            [gcc_bin, "--version"], universal_newlines=True
+        )
+        version = result.split("\n")[0]
         logging.info(f"GCC version is {version}")
         return version
     except subprocess.SubprocessError:
@@ -557,7 +559,9 @@ def _version_hash(version: str) -> str:
     return h % (2 << 64)
 
 
-def get_spec(gcc_bin: str, cache_dir: Optional[pathlib.Path] = None) -> Optional[GccSpec]:
+def get_spec(
+    gcc_bin: str, cache_dir: Optional[pathlib.Path] = None
+) -> Optional[GccSpec]:
     """Get the specification for a GCC executable.
     gcc_bin - path or name of the executable
     cache_dir - optional directory to search for cached versions of the spec.
@@ -614,7 +618,7 @@ def get_spec(gcc_bin: str, cache_dir: Optional[pathlib.Path] = None) -> Optional
 
 if __name__ == "__main__":
     """Find the spec for GCC and print what is found.
-    Accepts zero, one or two arguments. 
+    Accepts zero, one or two arguments.
     The first is the name or path of the GCC binary. If not given, then just
     'gcc' is used.
     The second is the optional cache directory. If not given, then no cache dir
