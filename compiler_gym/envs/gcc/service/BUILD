@@ -9,7 +9,6 @@ filegroup(
     srcs = [
         "compiler_gym-gcc-service",
         "gcc_service.py",
-        "gcc_spec.py",
     ],
     visibility = ["//visibility:public"],
 )

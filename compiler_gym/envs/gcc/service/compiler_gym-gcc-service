@@ -4,8 +4,10 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
+import sys
 from compiler_gym.envs.gcc.service.gcc_service import GccCompilationSession
 from compiler_gym.service.runtime import create_and_run_compiler_gym_service
 
 if __name__ == "__main__":
-    create_and_run_compiler_gym_service(GccCompilationSession)
+    gcc_bin = sys.argv[1] if len(sys.argv) > 2 else "gcc"
+    create_and_run_compiler_gym_service(lambda: GccCompilationSession, gcc_bin=gcc_bin)

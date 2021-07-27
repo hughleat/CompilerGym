@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from urllib.request import urlopen
 
-from compiler_gym.envs.gcc.service import gcc_spec
+from compiler_gym.envs.gcc import gcc_spec, GccSpec
 from compiler_gym.service import CompilationSession
 from compiler_gym.service.proto import Action as ProtoAction
 from compiler_gym.service.proto import (
@@ -31,15 +31,13 @@ from compiler_gym.service.proto import (
     ScalarRange,
     ScalarRangeList,
 )
+from compiler_gym.util.runfiles_path import cache_path
 
 
 class GccCompilationSession(CompilationSession):
     """A GCC interactive compilation session."""
 
     compiler_version: str = "1.0.0"
-
-    """The GccSpec for this compiler"""
-    spec = gcc_spec.get_spec()
 
     def __init__(
         self, working_directory: Path, action_space: ActionSpace, benchmark: Benchmark
@@ -49,28 +47,198 @@ class GccCompilationSession(CompilationSession):
         self.benchmark = benchmark
         # Timeout value for compilation (in seconds)
         self._timeout = None
-        if self.spec:
-            # The current choices for each options. '-1' indicates the implicit
-            # missing option.
-            self.choices = [-1] * len(self.spec.options)
-            # The source code
-            self._source = None
-            # The assembled code
-            self._asm = None
-            # Size of the assembled code
-            self._asm_size = None
-            # Hash of the assembled code
-            self._asm_hash = None
-            # The object binary
-            self._obj = None
-            # size of the object binary
-            self._obj_size = None
-            # Hash of the object binary
-            self._obj_hash = None
+        # The source code
+        self._source = None
+        # The assembled code
+        self._asm = None
+        # Size of the assembled code
+        self._asm_size = None
+        # Hash of the assembled code
+        self._asm_hash = None
+        # The object binary
+        self._obj = None
+        # size of the object binary
+        self._obj_size = None
+        # Hash of the object binary
+        self._obj_hash = None
+        # Set the path to the GCC executable
+        self._gcc_bin = "gcc"
+        # Initially the choices and the spec, etc are empty. They will be
+        # initialised lazily
+        self._spec = None
+        self._choices = None
+        self._actions = None
+        self._action_spaces = None
+        self._observation_spaces = None
 
-            logging.info("Started a compilation session for %s", benchmark.uri)
-        else:
-            raise RuntimeError("Unable to create GCC spec, check the GCC_BIN env var.")
+    @property
+    def gcc_bin(self) -> str:
+        """Get the path to the GCC executable"""
+        return self._gcc_bin
+
+    @gcc_bin.setter
+    def gcc_bin(self, value):
+        """Setter for gcc_bin."""
+        self._gcc_bin = value
+        # Unset the spec and choices
+        self._spec = None
+        self._choice = None
+        self._actions = None
+        self._action_spaces = None
+        self._observation_spaces = None
+
+    @property
+    def spec(self) -> GccSpec:
+        """Get (and possibly create the GCC spec)"""
+        if self._spec is None:
+            cache_dir = cache_path("gcc")
+            self._spec = gcc_spec(self._gcc_bin, cache_dir)
+        return self._spec
+
+    @property
+    def choices(self) -> List[int]:
+        if self._choices is None:
+            self._choices = [-1] * len(self.spec.options)
+        return self._choices
+
+    @choices.setter
+    def choices(self, value: List[int]):
+        self._choices = value
+
+    @property
+    def actions(self) -> List['Action']:
+        if self._actions is None:
+            # The available actions
+            self._actions = []
+
+            # Actions that are small will have all their various choices made as
+            # explicit actions.
+            # Actions that are not small will have the abbility to increment the choice
+            # by different amounts.
+            for i, option in enumerate(self.spec.options):
+                if len(option) < 10:
+                    for j in range(len(option)):
+                        self._actions.append(SimpleAction(option, i, j))
+                if len(option) >= 10:
+                    self._actions.append(IncrAction(option, i, 1))
+                    self._actions.append(IncrAction(option, i, -1))
+                if len(option) >= 50:
+                    self._actions.append(IncrAction(option, i, 10))
+                    self._actions.append(IncrAction(option, i, -10))
+                if len(option) >= 500:
+                    self._actions.append(IncrAction(option, i, 100))
+                    self._actions.append(IncrAction(option, i, -100))
+                if len(option) >= 5000:
+                    self._actions.append(IncrAction(option, i, 1000))
+                    self._actions.append(IncrAction(option, i, -1000))
+        return self._actions
+
+    @property
+    def action_spaces(self):
+        if self._action_spaces is None:
+            self._action_spaces = [
+                ActionSpace(
+                    name="default", action=list(map(str, self.actions))
+                )
+            ]
+        return self._action_spaces
+
+    @property
+    def observation_spaces(self):
+        if self._observation_spaces is None:
+            self._observation_spaces = [
+                # A string of the source code
+                ObservationSpace(
+                    name="source",
+                    string_size_range=ScalarRange(min=ScalarLimit(value=0)),
+                    deterministic=True,
+                    platform_dependent=False,
+                    default_value=Observation(string_value=""),
+                ),
+                # A string of the assembled code
+                ObservationSpace(
+                    name="asm",
+                    string_size_range=ScalarRange(min=ScalarLimit(value=0)),
+                    deterministic=True,
+                    platform_dependent=True,
+                    default_value=Observation(string_value=""),
+                ),
+                # The size of the assembled code
+                ObservationSpace(
+                    name="asm-size",
+                    scalar_int64_range=ScalarRange(min=ScalarLimit(value=0)),
+                    deterministic=True,
+                    platform_dependent=True,
+                    default_value=Observation(
+                        scalar_int64=-1,
+                    ),
+                ),
+                # The hash of the assembled code
+                ObservationSpace(
+                    name="asm-hash",
+                    string_size_range=ScalarRange(
+                        min=ScalarLimit(value=0), max=ScalarLimit(value=200)
+                    ),
+                    deterministic=True,
+                    platform_dependent=True,
+                    default_value=Observation(string_value=""),
+                ),
+                # A bytes of the object code
+                ObservationSpace(
+                    name="obj",
+                    binary_size_range=ScalarRange(min=ScalarLimit(value=0)),
+                    deterministic=True,
+                    platform_dependent=False,
+                    default_value=Observation(binary_value=b""),
+                ),
+                # The size of the object code
+                ObservationSpace(
+                    name="obj-size",
+                    scalar_int64_range=ScalarRange(min=ScalarLimit(value=-1)),
+                    deterministic=True,
+                    platform_dependent=True,
+                    default_value=Observation(
+                        scalar_int64=-1,
+                    ),
+                ),
+                # The hash of the object code
+                ObservationSpace(
+                    name="obj-hash",
+                    string_size_range=ScalarRange(
+                        min=ScalarLimit(value=0), max=ScalarLimit(value=200)
+                    ),
+                    deterministic=True,
+                    platform_dependent=True,
+                    default_value=Observation(string_value=""),
+                ),
+                # A list of the choices. Each element corresponds to an option in the spec.
+                # '-1' indicates that this is empty on the command line (e.g. if the choice
+                # corresponding to the '-O' option is -1, then no -O flag will be emitted.)
+                # If a nonnegative number if given then that particular choice is used
+                # (e.g. for the -O flag, 5 means use '-Ofast' on the command line.)
+                ObservationSpace(
+                    name="choices",
+                    int64_range_list=ScalarRangeList(
+                        range=[
+                            ScalarRange(
+                                min=ScalarLimit(value=0), max=ScalarLimit(value=len(option) - 1)
+                            )
+                            for option in GccCompilationSession.spec.options
+                        ]
+                    ),
+                ),
+                # The command line for compiling the object file as a string
+                ObservationSpace(
+                    name="command-line",
+                    string_size_range=ScalarRange(
+                        min=ScalarLimit(value=0), max=ScalarLimit(value=200)
+                    ),
+                    deterministic=True,
+                    platform_dependent=True,
+                    default_value=Observation(string_value=""),
+                ),
+            ]
+        return self._observation_spaces
 
     @property
     def source(self) -> str:
@@ -144,7 +312,7 @@ class GccCompilationSession(CompilationSession):
             for option, choice in zip(self.spec.options, self.choices)
             if choice >= 0
         ]
-        cmd_line = [self.spec.bin] + opts + ["-c", src_path, "-o", obj_path]
+        cmd_line = [self.spec.bin] + opts + ["-w", "-c", src_path, "-o", obj_path]
         return cmd_line
 
     def asm_command_line(
@@ -161,7 +329,7 @@ class GccCompilationSession(CompilationSession):
             for option, choice in zip(self.spec.options, self.choices)
             if choice >= 0
         ]
-        cmd_line = [self.spec.bin] + opts + ["-S", src_path, "-o", asm_path]
+        cmd_line = [self.spec.bin] + opts + ["-w", "-S", src_path, "-o", asm_path]
         return cmd_line
 
     def prepare_files(self):
@@ -271,7 +439,10 @@ class GccCompilationSession(CompilationSession):
             raise KeyError(observation_space.name)
 
     def handle_session_parameter(self, key: str, value: str) -> Optional[str]:
-        if key == "gcc-spec":
+        if key == "gcc-bin":
+            self.gcc_bin = value
+            return ""
+        elif key == "gcc-spec":
             return codecs.encode(pickle.dumps(self.spec), "base64").decode()
         elif key == "choices":
             choices = list(map(int, value.split(",")))
@@ -341,135 +512,3 @@ class IncrAction(Action):
 
     def __str__(self) -> str:
         return f"{self.option}[{self.choice_incr:+}]"
-
-
-if GccCompilationSession.spec:
-    # The available actions
-    GccCompilationSession.actions = []
-
-    # Actions that are small will have all their various choices made as
-    # explicit actions.
-    # Actions that are not small will have the abbility to increment the choice
-    # by different amounts.
-    for i, option in enumerate(GccCompilationSession.spec.options):
-        if len(option) < 10:
-            for j in range(len(option)):
-                GccCompilationSession.actions.append(SimpleAction(option, i, j))
-        if len(option) >= 10:
-            GccCompilationSession.actions.append(IncrAction(option, i, 1))
-            GccCompilationSession.actions.append(IncrAction(option, i, -1))
-        if len(option) >= 50:
-            GccCompilationSession.actions.append(IncrAction(option, i, 10))
-            GccCompilationSession.actions.append(IncrAction(option, i, -10))
-        if len(option) >= 500:
-            GccCompilationSession.actions.append(IncrAction(option, i, 100))
-            GccCompilationSession.actions.append(IncrAction(option, i, -100))
-        if len(option) >= 5000:
-            GccCompilationSession.actions.append(IncrAction(option, i, 1000))
-            GccCompilationSession.actions.append(IncrAction(option, i, -1000))
-
-    # The action spaces. Just wraps the 'actions' list.
-    GccCompilationSession.action_spaces = [
-        ActionSpace(
-            name="default", action=list(map(str, GccCompilationSession.actions))
-        )
-    ]
-
-    # A list of observation spaces supported by this service.
-    GccCompilationSession.observation_spaces = [
-        # A string of the source code
-        ObservationSpace(
-            name="source",
-            string_size_range=ScalarRange(min=ScalarLimit(value=0)),
-            deterministic=True,
-            platform_dependent=False,
-            default_value=Observation(string_value=""),
-        ),
-        # A string of the assembled code
-        ObservationSpace(
-            name="asm",
-            string_size_range=ScalarRange(min=ScalarLimit(value=0)),
-            deterministic=True,
-            platform_dependent=True,
-            default_value=Observation(string_value=""),
-        ),
-        # The size of the assembled code
-        ObservationSpace(
-            name="asm-size",
-            scalar_int64_range=ScalarRange(min=ScalarLimit(value=0)),
-            deterministic=True,
-            platform_dependent=True,
-            default_value=Observation(
-                scalar_int64=-1,
-            ),
-        ),
-        # The hash of the assembled code
-        ObservationSpace(
-            name="asm-hash",
-            string_size_range=ScalarRange(
-                min=ScalarLimit(value=0), max=ScalarLimit(value=200)
-            ),
-            deterministic=True,
-            platform_dependent=True,
-            default_value=Observation(string_value=""),
-        ),
-        # A bytes of the object code
-        ObservationSpace(
-            name="obj",
-            binary_size_range=ScalarRange(min=ScalarLimit(value=0)),
-            deterministic=True,
-            platform_dependent=False,
-            default_value=Observation(binary_value=b""),
-        ),
-        # The size of the object code
-        ObservationSpace(
-            name="obj-size",
-            scalar_int64_range=ScalarRange(min=ScalarLimit(value=-1)),
-            deterministic=True,
-            platform_dependent=True,
-            default_value=Observation(
-                scalar_int64=-1,
-            ),
-        ),
-        # The hash of the object code
-        ObservationSpace(
-            name="obj-hash",
-            string_size_range=ScalarRange(
-                min=ScalarLimit(value=0), max=ScalarLimit(value=200)
-            ),
-            deterministic=True,
-            platform_dependent=True,
-            default_value=Observation(string_value=""),
-        ),
-        # A list of the choices. Each element corresponds to an option in the spec.
-        # '-1' indicates that this is empty on the command line (e.g. if the choice
-        # corresponding to the '-O' option is -1, then no -O flag will be emitted.)
-        # If a nonnegative number if given then that particular choice is used
-        # (e.g. for the -O flag, 5 means use '-Ofast' on the command line.)
-        ObservationSpace(
-            name="choices",
-            int64_range_list=ScalarRangeList(
-                range=[
-                    ScalarRange(
-                        min=ScalarLimit(value=0), max=ScalarLimit(value=len(option) - 1)
-                    )
-                    for option in GccCompilationSession.spec.options
-                ]
-            ),
-        ),
-        # The command line for compiling the object file as a string
-        ObservationSpace(
-            name="command-line",
-            string_size_range=ScalarRange(
-                min=ScalarLimit(value=0), max=ScalarLimit(value=200)
-            ),
-            deterministic=True,
-            platform_dependent=True,
-            default_value=Observation(string_value=""),
-        ),
-    ]
-
-else:
-    raise RuntimeError(
-        f"Unable to create GCC spec.\n Is the GCC_BIN ({os.getenv('GCC_BIN')}) environment set correctly?"
-    )

@@ -8,14 +8,11 @@
 The goal of this file is to query the available settings in a GCC compiler so
 that they don't have to be hard coded.
 
-The particular binary is given by the GCC_BIN environment variable. If not set,
-then 'gcc' will be used.
-
 The main entry point to this file is the 'get_spec' function which returns a
 GccSpec object. That object describes the version, options and parameters.
 
 Querying these settings is time consuming, so this file tries to cache the
-values in a cache directory (~/.cache/compiler_gym/gcc).
+values in a cache directory.
 
 Running this file will print the gcc spec to stdout.
 """
@@ -31,15 +28,7 @@ from typing import List, Optional
 
 # To ensure that, when restoring, we do not accept old specs, the specs are
 # versioned.  The current version number is below.
-spec_version = "2021-07-16_11-65-33"
-
-# The binary to use. Taken from an environment variable. Defaults to 'gcc'.
-gcc_bin = os.getenv("GCC_BIN") or "gcc"
-
-# TODO util/cache_path (runfiles)
-# Location of the cache directory
-cache_dir = pathlib.Path.home() / ".cache" / "compiler_gym" / "gcc"
-
+spec_version = "1.0"
 
 class Option:
     """An Option is either a command line optimisation setting or a parameter.
@@ -218,11 +207,19 @@ class GccParamIntOption(Option):
 
 
 class GccSpec:
-    """This class combines all the information about the version and options,"""
+    """This class combines all the information about the version and options.
+    It acts as a list of Options"""
 
     def __init__(
         self, bin: str, version: str, options: List[Option], spec_version: str
     ):
+        """Initialise the spec
+        bin - the name or path of the gcc executable.
+        version - the gcc version string
+        options - the list of options
+        spec_version - the version of the spec file, to enable caching to know
+        if a spec is stale due to changing the code.
+        """
         self.bin = bin
         self.version = version
         self.options = options
@@ -230,7 +227,10 @@ class GccSpec:
 
     @property
     def size(self) -> int:
-        """Calculate the size of the option space"""
+        """Calculate the size of the option space. This is the product of the 
+        cardinalities of all the options.
+        Note this size is likely to big to be returned by __len__.
+        """
         sz = 1
         # Each option can be applied or not
         for option in self.options:
@@ -238,7 +238,7 @@ class GccSpec:
         return sz
 
 
-def _gcc_parse_optimize(gcc_bin: str = gcc_bin) -> List[Option]:
+def _gcc_parse_optimize(gcc_bin: str) -> List[Option]:
     """Parse the optimisation help string from the GCC binary to find
     options."""
 
@@ -246,8 +246,7 @@ def _gcc_parse_optimize(gcc_bin: str = gcc_bin) -> List[Option]:
 
     # Call 'gcc --help=optimize -Q'
     args = [gcc_bin, "--help=optimize", "-Q"]
-    result = subprocess.run(args, capture_output=True)
-    # TODO Check for errors
+    result = subprocess.run(args, capture_output=True, check_output=True)
     # Split into lines. Ignore the first line.
     out = result.stdout.decode().split("\n")[1:]
 
@@ -383,7 +382,7 @@ def _gcc_parse_optimize(gcc_bin: str = gcc_bin) -> List[Option]:
     return list(map(lambda x: x[1], sorted(list(options.items()))))
 
 
-def _gcc_parse_params(gcc_bin: str = gcc_bin) -> List[Option]:
+def _gcc_parse_params(gcc_bin: str) -> List[Option]:
     """Parse the param help string from the GCC binary to find
     options."""
 
@@ -391,8 +390,7 @@ def _gcc_parse_params(gcc_bin: str = gcc_bin) -> List[Option]:
     logging.info("Parsing GCC param space")
 
     args = [gcc_bin, "--help=param", "-Q"]
-    result = subprocess.run(args, capture_output=True)
-    # TODO check for errors
+    result = subprocess.run(args, capture_output=True, check_output=True)
     out = result.stdout.decode().split("\n")[1:]
 
     param_enum_pat = re.compile("--param=([-a-zA-Z0-9]+)=\\[([-A-Za-z_\\|]+)\\]")
@@ -536,14 +534,13 @@ def _fix_options(options: List[Option]) -> List[Option]:
     return options
 
 
-def _gcc_get_version(gcc_bin: str = gcc_bin) -> Optional[str]:
+def _gcc_get_version(gcc_bin: str) -> Optional[str]:
     """Get the version string"""
 
     logging.info(f"Getting GCC version for {gcc_bin}")
     try:
         args = [gcc_bin, "--version"]
-        result = subprocess.run(args, capture_output=True)
-        # TODO do something with errors
+        result = subprocess.run(args, capture_output=True, check_output=True)
         version = result.stdout.decode().split("\n")[0]
         logging.info(f"GCC version is {version}")
         return version
@@ -560,35 +557,40 @@ def _version_hash(version: str) -> str:
     return h % (2 << 64)
 
 
-def get_spec(gcc_bin: str = gcc_bin) -> Optional[GccSpec]:
+def get_spec(gcc_bin: str, cache_dir: Optional[pathlib.Path] = None) -> Optional[GccSpec]:
+    """Get the specification for a GCC executable.
+    gcc_bin - path or name of the executable
+    cache_dir - optional directory to search for cached versions of the spec.
+    """
     # Get the version
     version = _gcc_get_version(gcc_bin)
     if not version:
         # Already logged the problem
         return None
 
-    # See if there is a pickled spec in the cache_dir
-    os.makedirs(cache_dir, exist_ok=True)
-    # First we use a hash to name the file
-    spec_filename = f"gcc-spec-{_version_hash(version)}.pkl"
-    spec_path = cache_dir / spec_filename
-
-    # Try to get the pickled version
     spec = None
-    if os.path.isfile(spec_path):
-        # Pickle exists
-        try:
-            with open(spec_path, "rb") as f:
-                spec = pickle.load(f)
-            spec.gcc_bin = gcc_bin
-            logging.info(f"GccSpec for version '{version}' read from {spec_path}")
-            if spec.spec_version != spec_version:
-                logging.info(
-                    f"Spec version '{spec.spec_version}'!='{spec_version}' out of date. Ignoring cached spec"
-                )
-                spec = None
-        except Exception:
-            logging.warning(f"Unable to unpickle spec from '{spec_path}'")
+    # See if there is a pickled spec in the cache_dir
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+        # First we use a hash to name the file
+        spec_filename = f"gcc-spec-{_version_hash(version)}.pkl"
+        spec_path = cache_dir / spec_filename
+
+        # Try to get the pickled version
+        if os.path.isfile(spec_path):
+            # Pickle exists
+            try:
+                with open(spec_path, "rb") as f:
+                    spec = pickle.load(f)
+                spec.gcc_bin = gcc_bin
+                logging.info(f"GccSpec for version '{version}' read from {spec_path}")
+                if spec.spec_version != spec_version:
+                    logging.info(
+                        f"Spec version '{spec.spec_version}'!='{spec_version}' out of date. Ignoring cached spec"
+                    )
+                    spec = None
+            except Exception:
+                logging.warning(f"Unable to unpickle spec from '{spec_path}'")
 
     if spec is None:
         # Pickle doesn't exist, parse
@@ -598,12 +600,13 @@ def get_spec(gcc_bin: str = gcc_bin) -> Optional[GccSpec]:
         spec = GccSpec(gcc_bin, version, options, spec_version)
         if not spec.options:
             return None
-        try:
-            with open(spec_path, "wb") as f:
-                pickle.dump(spec, f)
-            logging.info(f"GccSpec for version '{version}' written to {spec_path}")
-        except Exception:
-            logging.warning(f"Unable to cache spec from '{spec_path}'")
+        if cache_dir is not None:
+            try:
+                with open(spec_path, "wb") as f:
+                    pickle.dump(spec, f)
+                logging.info(f"GccSpec for version '{version}' written to {spec_path}")
+            except Exception:
+                logging.warning(f"Unable to cache spec from '{spec_path}'")
 
     logging.info(f"GccSpec size is approximately 10^{math.log(spec.size)}")
     return spec
@@ -611,9 +614,15 @@ def get_spec(gcc_bin: str = gcc_bin) -> Optional[GccSpec]:
 
 if __name__ == "__main__":
     """Find the spec for GCC and print what is found.
-    If an argument is given, use it as the gcc binary path."""
-    gcc_bin = "gcc-11"
-    spec = get_spec(gcc_bin if len(sys.argv) == 1 else sys.argv[1])
+    Accepts zero, one or two arguments. 
+    The first is the name or path of the GCC binary. If not given, then just
+    'gcc' is used.
+    The second is the optional cache directory. If not given, then no cache dir
+    will be used."
+    This program will print the GCC spec to standard output."""
+    gcc_bin = "gcc" if len(sys.argv) < 2 else sys.argv[1]
+    cache_dir = None if len(sys.argv) < 3 else sys.argv[2]
+    spec = get_spec(gcc_bin, cache_dir)
 
     print(f"GCC Version: {spec.version}")
     print("Options:")

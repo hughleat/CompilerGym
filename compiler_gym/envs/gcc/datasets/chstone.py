@@ -9,6 +9,7 @@ from typing import Iterable
 
 from compiler_gym.datasets import Benchmark, TarDatasetWithManifest
 from compiler_gym.datasets.benchmark import BenchmarkWithSource
+from compiler_gym.envs.gcc.service.gcc_spec import gcc_bin
 from compiler_gym.util import thread_pool
 from compiler_gym.util.filesystem import atomic_file_write
 
@@ -88,14 +89,28 @@ class CHStoneDataset(TarDatasetWithManifest):
             "sha": "sha_driver.c",
             "jpeg": "main.c",
         }.get(benchmark_name, f"{benchmark_name}.c")
-        c_file_abspath = self.dataset_root / benchmark_name / c_file_name
+        source_dir_path = self.dataset_root / benchmark_name
+        source_path = source_dir_path / c_file_name
+        preprocessed_path = source_dir_path / "src.c"
 
-        if not c_file_abspath.is_file():
-            raise LookupError(
-                f"Benchmark not found: {uri} (file not found: {c_file_abspath})"
-            )
+        # If the file does not exist, compile it on-demand.
+        if not preprocessed_path.is_file():
+            if not source_path.is_file():
+                raise LookupError(
+                    f"Benchmark not found: {uri} (file not found: {source_path})"
+                )
 
-        return Benchmark.from_file(uri, c_file_abspath)
+            with atomic_file_write(preprocessed_path) as tmp_path:
+                # Work out the command to preprocess the file with LLVM
+                cmd = [gcc_bin]
+
+                cmd += ["-I", str(source_dir_path)]
+                cmd += [str(source_path)]
+                cmd += ["-E", "-o", str(tmp_path)]
+
+                subprocess.check_call(cmd, timeout=300)
+
+        return Benchmark.from_file(uri, preprocessed_path)
 
     @property
     def size(self) -> int:

@@ -6,7 +6,11 @@ load("@rules_python//python:defs.bzl", "py_library", "py_test")
 
 py_library(
     name = "gcc",
-    srcs = ["__init__.py"],
+    srcs = [
+        "__init__.py",
+        "gcc_env.py",
+        "gcc_spec.py",
+    ],
     data = [
         "//compiler_gym/envs/gcc/service",
     ],
